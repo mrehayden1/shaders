@@ -10,7 +10,7 @@ import Graphics
 import Window
 
 appName :: String
-appName = "Caracal"
+appName = "Bagatelle"
 
 appVersion :: String
 appVersion = "0.1.0"

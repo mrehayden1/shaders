@@ -1,13 +1,18 @@
-# Caracal
+# Bagatelle
 
-## Working Titles
+A simple game of cards...
 
-- Bagatelle
+## Potential Titles
+
+- Bagatelle (working)
 - Pagliacci
+- Caracal
 
-# Installation
+# Dependencies
 
-## C libs
+## System libraries
+
+To build GHC will need to link against the following system libraries.
 
 - vulkan
 - glfw3
