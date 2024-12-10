@@ -22,6 +22,9 @@ description:         An eDSL for GPU progamming based on the Vulkan API.
 dependencies:
 - base >= 4.16.4 && < 5
 
+default-extensions:
+- RecordWildCards
+
 ghc-options:
 - -Wall
 - -Wcompat
@@ -36,8 +39,9 @@ ghc-options:
 library:
   source-dirs: src
   dependencies:
-  - bytestring
   - GLFW-b
+  - bytestring
+  - transformers
   - vector
   - vulkan
 
