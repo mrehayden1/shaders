@@ -20,7 +20,7 @@ extra-source-files:
 description:         An eDSL for GPU progamming based on the Vulkan API.
 
 dependencies:
-- base >= 4.7 && < 5
+- base >= 4.16.4 && < 5
 
 ghc-options:
 - -Wall
