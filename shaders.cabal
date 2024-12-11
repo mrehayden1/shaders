@@ -27,7 +27,7 @@ library
   exposed-modules:
       Graphics
       Graphics.Device
-      Lib
+      Graphics.Window
   other-modules:
       Paths_shaders
   hs-source-dirs:
