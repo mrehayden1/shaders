@@ -27,6 +27,7 @@ library
   exposed-modules:
       Graphics
       Graphics.Device
+      Graphics.Instance
       Graphics.Window
   other-modules:
       Paths_shaders
@@ -42,6 +43,7 @@ library
     , transformers
     , vector
     , vulkan
+    , witherable
   default-language: Haskell2010
 
 test-suite shaders-test

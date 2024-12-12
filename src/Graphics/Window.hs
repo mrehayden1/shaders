@@ -14,5 +14,6 @@ getWindowSurface window vkInstance = do
   let instPtr = castPtr $ Vk.instanceHandle vkInstance
   alloca $ \surfacePtr -> do
     res <- Vk.Result <$> GLFW.createWindowSurface instPtr window nullPtr surfacePtr
+    -- Throw an exception on error the same way our Vulkan bindings do.
     when (res < Vk.SUCCESS) . throwIO . Vk.VulkanException $ res
     peek surfacePtr
