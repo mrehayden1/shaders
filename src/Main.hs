@@ -4,6 +4,7 @@ module Main (
 
 import Control.Monad
 import Data.Function
+import Data.Maybe
 import Text.Printf
 
 import Graphics
@@ -20,19 +21,24 @@ main = do
   printf "\nStarting %s v%s...\n\n" appName appVersion
   putStrLn "Copyright 2024 Categorical Industries.\n"
 
-  win <- createWindow appName
+  window <- createWindow appName
 
-  vkInstance <- Graphics.initialise
+  putStrLn "Initialising graphics."
+
+  mGraphics <- Graphics.initialise window
+  unless (isJust mGraphics) $
+    putStrLn "Failed to create Vulkan Instance"
+  let graphics = fromJust mGraphics
 
   putStrLn "Finished startup."
   putStrLn "Running...\n"
 
   fix $ \loop -> do
     pollEvents
-    close <- windowShouldClose win
+    close <- windowShouldClose window
     unless close loop
 
-  destroyWindow win
-  Graphics.cleanup vkInstance
+  destroyWindow window
+  Graphics.cleanup graphics
 
   putStrLn "Exiting..."

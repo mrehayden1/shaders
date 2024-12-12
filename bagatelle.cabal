@@ -26,7 +26,6 @@ source-repository head
 executable bagatelle
   main-is: Main.hs
   other-modules:
-      Graphics
       Window
       Paths_bagatelle
   hs-source-dirs:
@@ -37,7 +36,5 @@ executable bagatelle
   build-depends:
       GLFW-b
     , base >=4.7 && <5
-    , bytestring
-    , vector
-    , vulkan
+    , shaders
   default-language: Haskell2010

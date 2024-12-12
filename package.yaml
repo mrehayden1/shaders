@@ -45,7 +45,5 @@ executables:
     - -rtsopts
     - -with-rtsopts=-N
     dependencies:
-    - bytestring
     - GLFW-b
-    - vector
-    - vulkan
+    - shaders
