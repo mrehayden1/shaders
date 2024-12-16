@@ -28,7 +28,7 @@ initialise window = runMaybeT $ do
   vkInstance <- liftIO createInstance
   lift $ info "Creating surface..."
   surface <- liftIO $ getWindowSurface window vkInstance
-  lift $ info "Creating device..."
+  lift $ info "Creating logical device..."
   device <- MaybeT $ createDevice vkInstance surface
   return $ GraphicsEnv device surface vkInstance
 

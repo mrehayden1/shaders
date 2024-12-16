@@ -95,14 +95,14 @@ getSuitableDevices :: (MonadIO m, Logger m)
   -> m [(PhysicalDevice, Word32)]
 getSuitableDevices vkInstance surface = do
   (_, devices) <- Vk.enumeratePhysicalDevices vkInstance
-  info . printf "%d devices found." . V.length $ devices
+  debug . printf "%d devices found." . V.length $ devices
 
   devices' <- flip iwither devices $ \i device -> runMaybeT $ do
     properties <- Vk.getPhysicalDeviceProperties device
     features <- Vk.getPhysicalDeviceFeatures device
 
     let deviceName = UTF8.toString . Vk.deviceName $ properties
-    lift . info . printf "Checking device %d: %s." i $ deviceName
+    lift . debug . printf "Checking device %d: %s." i $ deviceName
 
     -- Check this device for required extension support and skip it if there
     -- are any that are unsupported.
@@ -110,13 +110,13 @@ getSuitableDevices vkInstance surface = do
     (result, extensions) <-
       Vk.enumerateDeviceExtensionProperties device Nothing
     when (result == Vk.INCOMPLETE) $
-      lift $ warn "Warning: Incomplete device extension list."
+      lift $ warn "Vulkan API returned incomplete device extension list."
     let unsupportedExtensions = (requiredDeviceExtensions \\) . V.toList
           . fmap Vk.extensionName $ extensions
     unless (null unsupportedExtensions) $ do
       let errStr = printf "Missing required extensions: %s." . intercalate ", "
             . fmap UTF8.toString $ unsupportedExtensions
-      lift . info $ errStr
+      lift . debug $ errStr
       fail errStr
     lift . debug . printf $ "Found required extensions."
 
@@ -126,7 +126,7 @@ getSuitableDevices vkInstance surface = do
     queueFamilyProperties <- Vk.getPhysicalDeviceQueueFamilyProperties device
     queueFamilyIndex <-
       findSuitableQueueFamilyIndex surface device queueFamilyProperties
-    lift . info . printf "Using queue family %d." $ queueFamilyIndex
+    lift . debug . printf "Using queue family %d." $ queueFamilyIndex
 
     -- Get the surface capabilities etc.
     swapChainSupport <- getDeviceSwapChainSupport surface device
@@ -174,7 +174,7 @@ findSuitableQueueFamilyIndex surface device queueFamilyProperties = do
                      $ queueFamilyProperties
   when (null queueFamilies) $ do
     let errStr = "No compatible queue family."
-    lift $ info errStr
+    lift $ debug errStr
     fail errStr
   hoistMaybe . listToMaybe . fmap fst $ queueFamilies
  where
