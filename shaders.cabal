@@ -26,6 +26,7 @@ source-repository head
 library
   exposed-modules:
       Graphics
+      Graphics.Class
       Graphics.Device
       Graphics.Instance
       Graphics.Window
@@ -34,13 +35,17 @@ library
   hs-source-dirs:
       src
   default-extensions:
+      OverloadedStrings
       RecordWildCards
+      ScopedTypeVariables
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
   build-depends:
       GLFW-b
     , base >=4.16.4 && <5
     , bytestring
+    , mtl
     , transformers
+    , utf8-string
     , vector
     , vulkan
     , witherable
@@ -54,7 +59,9 @@ test-suite shaders-test
   hs-source-dirs:
       test
   default-extensions:
+      OverloadedStrings
       RecordWildCards
+      ScopedTypeVariables
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.16.4 && <5

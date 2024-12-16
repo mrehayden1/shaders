@@ -4,22 +4,28 @@ module Graphics.Device (
   destroyDevice
 ) where
 
-import Control.Applicative
+import Control.Monad
+import Control.Monad.IO.Class
+import Control.Monad.Trans
 import Control.Monad.Trans.Maybe
 import Data.Bits
-import Data.ByteString (ByteString)
+import Data.ByteString.UTF8 as UTF8
 import Data.Function
-import Data.List ((\\), sortBy)
+import Data.List ((\\), intercalate, sortBy)
 import Data.Maybe
 import Data.Ord
 import Data.Word
+import Data.Vector (Vector)
 import qualified Data.Vector as V
+import Text.Printf
 import qualified Vulkan as Vk
 import qualified Vulkan.Zero as Vk
 import Vulkan.CStruct.Extends
 import Witherable
 
--- Abstract representation of a graphics enabled device.
+import Graphics.Class
+
+-- A graphics enabled logical device.
 data Device = Device {
   deviceVkDevice :: Vk.Device,
   deviceQueueHandle :: Vk.Queue
@@ -28,18 +34,24 @@ data Device = Device {
 requiredDeviceExtensions :: [ByteString]
 requiredDeviceExtensions = [Vk.KHR_SWAPCHAIN_EXTENSION_NAME]
 
-createDevice :: Vk.Instance -> Vk.SurfaceKHR -> IO (Maybe Device)
+createDevice :: (MonadIO m, Logger m)
+  => Vk.Instance
+  -> Vk.SurfaceKHR
+  -> m (Maybe Device)
 createDevice vkInstance surface = runMaybeT $ do
-  physicalDevice <- MaybeT $ getMostSuitablePhysicalDevice vkInstance surface
-  queueFamilyIndex <- MaybeT . findSuitableQueueFamilyIndex surface
-    $ physicalDevice
+  devices <- lift $ getSuitableDevices vkInstance surface
+
+  (physicalDevice, queueFamilyIndex) <- hoistMaybe . listToMaybe $ devices
+  let deviceHandle = physicalDeviceHandle physicalDevice
+      deviceName = Vk.deviceName . physicalDeviceProperties $ physicalDevice
+  lift . info $ "Chosen physical device: " <> UTF8.toString deviceName
 
   let queueCreateInfo = pure . SomeStruct $
         Vk.DeviceQueueCreateInfo
           ()
           Vk.zero
           queueFamilyIndex
-          (pure 1)
+          (V.singleton 1)
 
       deviceCreateInfo =
         Vk.DeviceCreateInfo
@@ -50,94 +62,133 @@ createDevice vkInstance surface = runMaybeT $ do
           (V.fromList requiredDeviceExtensions)
           Nothing
 
-  vkDevice <- Vk.createDevice (physicalDeviceHandle physicalDevice)
-                deviceCreateInfo Nothing
+  -- Create the logical device
+  vkDevice <- Vk.createDevice deviceHandle deviceCreateInfo Nothing
 
   queue <- Vk.getDeviceQueue vkDevice queueFamilyIndex 0
 
   return . Device vkDevice $ queue
 
-destroyDevice :: Device -> IO ()
+destroyDevice :: MonadIO m => Device -> m ()
 destroyDevice Device{..} = do
-  Vk.destroyDevice deviceVkDevice Nothing
+  liftIO $ Vk.destroyDevice deviceVkDevice Nothing
 
+-- A graphics enabled physical device, such as a GPU or CPU.
 data PhysicalDevice = PhysicalDevice {
     physicalDeviceHandle :: Vk.PhysicalDevice,
-    physicalDeviceExtensions :: [Vk.ExtensionProperties],
+    physicalDeviceExtensions :: Vector Vk.ExtensionProperties,
     physicalDeviceFeatures :: Vk.PhysicalDeviceFeatures,
     physicalDeviceProperties :: Vk.PhysicalDeviceProperties,
-    physicalDeviceQueueFamilies :: [Vk.QueueFamilyProperties]
+    physicalDeviceQueueFamilies :: Vector Vk.QueueFamilyProperties,
+    physicalDeviceSwapChainSupport :: SwapChainSupport
   } deriving (Show)
 
-getAllDevices :: Vk.Instance -> IO [PhysicalDevice]
-getAllDevices vkInstance = do
-  (_, devices) <- Vk.enumeratePhysicalDevices vkInstance
-  let devices' = V.toList devices
-  --  Get the devices and their properties and features.
-  properties <- mapM Vk.getPhysicalDeviceProperties devices'
-  features <- mapM Vk.getPhysicalDeviceFeatures devices'
-  queueFamilyProperties <-
-    mapM (fmap V.toList . Vk.getPhysicalDeviceQueueFamilyProperties) devices'
-  extensions <-
-    mapM (fmap (V.toList . snd)
-            . (`Vk.enumerateDeviceExtensionProperties` Nothing))
-         devices'
+newtype SwapChainSupport = SwapChainSupport {
+    surfaceCapabilities :: Vk.SurfaceCapabilitiesKHR
+  } deriving (Show)
 
-  return . getZipList $ PhysicalDevice
-    <$> ZipList devices'
-    <*> ZipList extensions
-    <*> ZipList features
-    <*> ZipList properties
-    <*> ZipList queueFamilyProperties
-
-getMostSuitablePhysicalDevice :: Vk.Instance
+-- Returns a list of physical devices that have support everything we need
+-- sorted by a suitability score.
+getSuitableDevices :: (MonadIO m, Logger m)
+  => Vk.Instance
   -> Vk.SurfaceKHR
-  -> IO (Maybe PhysicalDevice)
-getMostSuitablePhysicalDevice vkInstance surface = do
-  devices <- getAllDevices vkInstance
-  -- Remove devices that don't support the features we need and sort by
-  -- suitability.
-  fmap (listToMaybe . sortBy (compare `on` Down . scoreSuitability))
-    . filterA isSuitable $ devices
- where
-  isSuitable :: PhysicalDevice -> IO Bool
-  isSuitable device = do
-    -- Check the device for required extension support.
-    let hasExtensions = null . (requiredDeviceExtensions \\)
-          . fmap Vk.extensionName . physicalDeviceExtensions $ device
-    -- Make sure there is a suitable queue family.
-    hasQueueFamily <-
-      fmap isJust . findSuitableQueueFamilyIndex surface $ device
-    return $ hasQueueFamily && hasExtensions
+  -> m [(PhysicalDevice, Word32)]
+getSuitableDevices vkInstance surface = do
+  (_, devices) <- Vk.enumeratePhysicalDevices vkInstance
+  info . printf "%d devices found." . V.length $ devices
 
-  scoreSuitability :: PhysicalDevice -> Int
-  scoreSuitability device =
-    case Vk.deviceType . physicalDeviceProperties $ device of
-      Vk.PHYSICAL_DEVICE_TYPE_DISCRETE_GPU -> 10
-      Vk.PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU -> 9
-      Vk.PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU -> 8
-      Vk.PHYSICAL_DEVICE_TYPE_CPU -> 7
-      Vk.PHYSICAL_DEVICE_TYPE_OTHER -> 0
+  devices' <- flip iwither devices $ \i device -> runMaybeT $ do
+    properties <- Vk.getPhysicalDeviceProperties device
+    features <- Vk.getPhysicalDeviceFeatures device
 
-findSuitableQueueFamilyIndex :: Vk.SurfaceKHR
-  -> PhysicalDevice
-  -> IO (Maybe Word32)
-findSuitableQueueFamilyIndex surface PhysicalDevice{..} =
-  -- Check the device has at least one queue family that can do everything we
-  -- want and pick it. This is pretty much always going to be the case.
-  fmap (listToMaybe . fmap fst)
-    . filterA (uncurry isSuitable) . zip [0..]
-    $ physicalDeviceQueueFamilies
+    let deviceName = UTF8.toString . Vk.deviceName $ properties
+    lift . info . printf "Checking device %d: %s." i $ deviceName
+
+    -- Check this device for required extension support and skip it if there
+    -- are any that are unsupported.
+    lift . debug . printf $ "Checking required extensions."
+    (result, extensions) <-
+      Vk.enumerateDeviceExtensionProperties device Nothing
+    when (result == Vk.INCOMPLETE) $
+      lift $ warn "Warning: Incomplete device extension list."
+    let unsupportedExtensions = (requiredDeviceExtensions \\) . V.toList
+          . fmap Vk.extensionName $ extensions
+    unless (null unsupportedExtensions) $ do
+      let errStr = printf "Missing required extensions: %s." . intercalate ", "
+            . fmap UTF8.toString $ unsupportedExtensions
+      lift . info $ errStr
+      fail errStr
+    lift . debug . printf $ "Found required extensions."
+
+    -- Find the first queue family that supports everything we need, skipping
+    -- the device if we can't find one.
+    lift . debug . printf $ "Finding compatible queue family."
+    queueFamilyProperties <- Vk.getPhysicalDeviceQueueFamilyProperties device
+    queueFamilyIndex <-
+      findSuitableQueueFamilyIndex surface device queueFamilyProperties
+    lift . info . printf "Using queue family %d." $ queueFamilyIndex
+
+    -- Get the surface capabilities etc.
+    swapChainSupport <- getDeviceSwapChainSupport surface device
+
+    let physicalDevice = PhysicalDevice device extensions features properties
+                           queueFamilyProperties swapChainSupport
+
+    return (physicalDevice, queueFamilyIndex)
+
+  -- Finally sort all the device by a suitability score and pick the best.
+  return . sortBy (compare `on` Down . scoreSuitability . fst) . V.toList
+    $ devices'
+
+scoreSuitability :: PhysicalDevice -> Int
+scoreSuitability device =
+  case Vk.deviceType . physicalDeviceProperties $ device of
+    Vk.PHYSICAL_DEVICE_TYPE_DISCRETE_GPU -> 10
+    Vk.PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU -> 9
+    Vk.PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU -> 8
+    Vk.PHYSICAL_DEVICE_TYPE_CPU -> 7
+    Vk.PHYSICAL_DEVICE_TYPE_OTHER -> 0
+
+getDeviceSwapChainSupport :: (MonadIO m, Logger m)
+  => Vk.SurfaceKHR
+  -> Vk.PhysicalDevice
+  -> MaybeT m SwapChainSupport
+getDeviceSwapChainSupport surface device = do
+  -- Note that we've already checked if there is a queue family that supports
+  -- the VK_KHR_surface extension as required by
+  -- `vkGetPhysicalDeviceSurfaceCapabilitiesKHR`.
+  lift . debug . printf $ "Getting surface capabilities."
+  surfaceCapabilities <- Vk.getPhysicalDeviceSurfaceCapabilitiesKHR device
+                           surface
+  return $ SwapChainSupport surfaceCapabilities
+
+-- Checks a device has at least one queue family that can do everything we want
+-- and pick it. This is pretty much always going to be the case.
+findSuitableQueueFamilyIndex :: forall m. (MonadIO m, Logger m)
+  => Vk.SurfaceKHR
+  -> Vk.PhysicalDevice
+  -> Vector Vk.QueueFamilyProperties
+  -> MaybeT m Word32
+findSuitableQueueFamilyIndex surface device queueFamilyProperties = do
+  queueFamilies <- filterA (uncurry isSuitable) . zip [0..] . V.toList
+                     $ queueFamilyProperties
+  when (null queueFamilies) $ do
+    let errStr = "No compatible queue family."
+    lift $ info errStr
+    fail errStr
+  hoistMaybe . listToMaybe . fmap fst $ queueFamilies
  where
   -- Some queue family properties we can get from the properties object, some
-  -- we have to request via extension APIs, hence why we're doing this in IO.
-  isSuitable :: Word32 -> Vk.QueueFamilyProperties -> IO Bool
+  -- we have to request via extension API calls, hence why we're doing this in
+  -- IO.
+  isSuitable :: Word32 -> Vk.QueueFamilyProperties -> MaybeT m Bool
   isSuitable i queue = do
-    canSurface <- supportsSurface i
+    canSurface <- liftIO $ supportsSurface i
     return . (&& canSurface) . supportsGraphics $ queue
 
-  supportsGraphics = (/= Vk.zero) . (.&. Vk.QUEUE_GRAPHICS_BIT)
-    . Vk.queueFlags
+  supportsGraphics = (/= Vk.zero) . (.&. Vk.QUEUE_GRAPHICS_BIT) . Vk.queueFlags
 
-  supportsSurface i = Vk.getPhysicalDeviceSurfaceSupportKHR
-                        physicalDeviceHandle i surface
+  supportsSurface i = Vk.getPhysicalDeviceSurfaceSupportKHR device i surface
+
+hoistMaybe :: Applicative m => Maybe a -> MaybeT m a
+hoistMaybe = MaybeT . pure

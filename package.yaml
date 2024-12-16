@@ -23,7 +23,9 @@ dependencies:
 - base >= 4.16.4 && < 5
 
 default-extensions:
+- OverloadedStrings
 - RecordWildCards
+- ScopedTypeVariables
 
 ghc-options:
 - -Wall
@@ -41,7 +43,9 @@ library:
   dependencies:
   - GLFW-b
   - bytestring
+  - mtl
   - transformers
+  - utf8-string
   - vector
   - vulkan
   - witherable
