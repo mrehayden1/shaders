@@ -81,8 +81,7 @@ data PhysicalDevice = PhysicalDevice {
     physicalDeviceSwapChainSupport :: SwapChainSupport
   } deriving (Show)
 
-newtype SwapChainSupport = SwapChainSupport {
-    surfaceCapabilities :: Vk.SurfaceCapabilitiesKHR
+data SwapChainSupport = SwapChainSupport {
   } deriving (Show)
 
 -- Returns a list of physical devices that have support everything we need
@@ -146,6 +145,15 @@ scoreSuitability device =
     Vk.PHYSICAL_DEVICE_TYPE_CPU -> 7
     Vk.PHYSICAL_DEVICE_TYPE_OTHER -> 0
 
+-- Try to get swap chain info, failing when the surface support doesn't meet
+-- requirements.
+--
+--   For surface format we require just one true colour, SRGB format:
+--
+--   {format=FORMAT_B8G8R8A8_SRGB, colorSpace=COLOR_SPACE_SRGB_NONLINEAR_KHR}
+--
+--   which is 99.9% supported on Windows.
+--
 getDeviceSwapChainSupport :: (MonadIO m, Logger m)
   => Vk.SurfaceKHR
   -> Vk.PhysicalDevice
@@ -157,7 +165,27 @@ getDeviceSwapChainSupport surface device = do
   lift . debug . printf $ "Getting surface capabilities."
   surfaceCapabilities <- Vk.getPhysicalDeviceSurfaceCapabilitiesKHR device
                            surface
-  return $ SwapChainSupport surfaceCapabilities
+
+  -- Make sure we have a compatible surface format
+  lift . debug . printf $ "Getting surface formats."
+  (res0, surfaceFormats) <- Vk.getPhysicalDeviceSurfaceFormatsKHR device
+                                surface
+  when (res0 == Vk.INCOMPLETE) $
+    lift $ warn "Vulkan API returned incomplete surface formats list."
+  let hasCompatibleSurfaceFormat = any isCompatibleSurfaceFormat . V.toList
+        $ surfaceFormats
+  unless hasCompatibleSurfaceFormat $ do
+    let errStr = "Missing required surface format {format=FORMAT_B8G8R8A8_SRGB"
+                   <> ", colorSpace=COLOR_SPACE_SRGB_NONLINEAR_KHR}."
+    lift . debug $ errStr
+    fail errStr
+
+  return SwapChainSupport
+
+ where
+  isCompatibleSurfaceFormat Vk.SurfaceFormatKHR{..} =
+    format == Vk.FORMAT_B8G8R8A8_SRGB
+      && colorSpace == Vk.COLOR_SPACE_SRGB_NONLINEAR_KHR
 
 -- Checks a device has at least one queue family that can do everything we want
 -- and pick it. This is pretty much always going to be the case.
