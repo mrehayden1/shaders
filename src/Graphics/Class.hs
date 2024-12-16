@@ -40,7 +40,7 @@ instance Logger IO where
   loggerLog Log{..} = printf "[%s] %s\n" (logLevelStr logLevel) logMessage
 
 logLevelStr :: LogLevel -> String
-logLevelStr LogDebug = "DEBUG"
-logLevelStr LogInfo  = "INFO "
-logLevelStr LogWarn  = "WARN "
-logLevelStr LogError = "ERROR"
+logLevelStr LogDebug = "\x1b[36mDEBUG\x1b[0m"
+logLevelStr LogInfo  = "\x1b[37mINFO \x1b[0m"
+logLevelStr LogWarn  = "\x1b[33mWARN \x1b[0m"
+logLevelStr LogError = "\x1b[31ERROR \x1b[0m"
