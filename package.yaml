@@ -11,7 +11,9 @@ extra-source-files:
 - CHANGELOG.md
 
 default-extensions:
+- GeneralizedNewtypeDeriving
 - OverloadedStrings
+- RecordWildCards
 
 # Metadata used when publishing your package
 # synopsis:            Short description of your package
@@ -46,4 +48,5 @@ executables:
     - -with-rtsopts=-N
     dependencies:
     - GLFW-b
+    - mtl
     - shaders

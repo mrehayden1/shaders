@@ -31,10 +31,13 @@ executable bagatelle
   hs-source-dirs:
       src
   default-extensions:
+      GeneralizedNewtypeDeriving
       OverloadedStrings
+      RecordWildCards
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       GLFW-b
     , base >=4.7 && <5
+    , mtl
     , shaders
   default-language: Haskell2010
