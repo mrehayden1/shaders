@@ -39,6 +39,7 @@ instance MonadIO m => MonadLogger (LoggerT m) where
       liftIO $ printf "[%s] %s\n" (logLevelStr logLevel) logMessage
    where
     logLevelStr :: LogLevel -> String
+    logLevelStr LogTrace = "TRACE"
     logLevelStr LogDebug = "\x1b[36mDEBUG\x1b[0m"
     logLevelStr LogInfo  = "\x1b[37mINFO \x1b[0m"
     logLevelStr LogWarn  = "\x1b[33mWARN \x1b[0m"
