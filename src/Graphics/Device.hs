@@ -102,7 +102,7 @@ getSuitableDevices vkInstance surface = do
 
     -- Check this device for required extension support and skip it if there
     -- are any that are unsupported.
-    lift . debug . printf $ "Checking required extensions."
+    lift . debug . printf $ "Checking device extensions."
     (result, extensions) <-
       Vk.enumerateDeviceExtensionProperties device Nothing
     when (result == Vk.INCOMPLETE) $
@@ -118,7 +118,7 @@ getSuitableDevices vkInstance surface = do
 
     -- Find the first queue family that supports everything we need, skipping
     -- the device if we can't find one.
-    lift . debug . printf $ "Finding compatible queue family."
+    lift . debug . printf $ "Finding compatible device queue family."
     queueFamilyProperties <- Vk.getPhysicalDeviceQueueFamilyProperties device
     queueFamilyIndex <-
       findSuitableQueueFamilyIndex surface device queueFamilyProperties
@@ -148,11 +148,13 @@ scoreSuitability device =
 -- Try to get swap chain info, failing when the surface support doesn't meet
 -- requirements.
 --
---   For surface format we require just one true colour, SRGB format:
---
+--   Surface format we require just one true colour, SRGB format:
 --   {format=FORMAT_B8G8R8A8_SRGB, colorSpace=COLOR_SPACE_SRGB_NONLINEAR_KHR}
---
 --   which is 99.9% supported on Windows.
+--
+--   Present mode: PRESENT_MODE_IMMEDIATE_KHR is our choice for development
+--   but we could fall back to PRESENT_MODE_FIFO_KHR (100% Windows support) if
+--   its not available.
 --
 getDeviceSwapChainSupport :: (MonadIO m, MonadLogger m)
   => Vk.SurfaceKHR
@@ -162,23 +164,40 @@ getDeviceSwapChainSupport surface device = do
   -- Note that we've already checked if there is a queue family that supports
   -- the VK_KHR_surface extension as required by
   -- `vkGetPhysicalDeviceSurfaceCapabilitiesKHR`.
-  lift . debug . printf $ "Getting surface capabilities."
+  lift . debug . printf $ "Getting device surface capabilities."
   surfaceCapabilities <- Vk.getPhysicalDeviceSurfaceCapabilitiesKHR device
                            surface
+  lift . trace . show $ surfaceCapabilities
 
-  -- Make sure we have a compatible surface format
-  lift . debug . printf $ "Getting surface formats."
+  -- Make sure we have the surface format we're looking for, abort if not.
+  lift . debug . printf $ "Checking device surface formats."
   (res0, surfaceFormats) <- Vk.getPhysicalDeviceSurfaceFormatsKHR device
                                 surface
   when (res0 == Vk.INCOMPLETE) $
     lift $ warn "Vulkan API returned incomplete surface formats list."
-  let hasCompatibleSurfaceFormat = any isCompatibleSurfaceFormat . V.toList
+  lift . trace . show $ surfaceFormats
+  let hasSurfaceFormat = any isCompatibleSurfaceFormat . V.toList
         $ surfaceFormats
-  unless hasCompatibleSurfaceFormat $ do
+  unless hasSurfaceFormat $ do
     let errStr = "Missing required surface format {format=FORMAT_B8G8R8A8_SRGB"
                    <> ", colorSpace=COLOR_SPACE_SRGB_NONLINEAR_KHR}."
     lift . debug $ errStr
     fail errStr
+  lift . debug . printf $ "Found compatible surface format."
+
+  -- Make sure we have the present mode we want.
+  lift . debug . printf $ "Checking deivce present modes."
+  (res1, presentModes) <- Vk.getPhysicalDeviceSurfacePresentModesKHR device
+                              surface
+  when (res1 == Vk.INCOMPLETE) $
+    lift $ warn "Vulkan API returned incomplete present modes list."
+  lift . trace . show $ presentModes
+  let hasPresentMode = Vk.PRESENT_MODE_IMMEDIATE_KHR `elem` presentModes
+  unless hasPresentMode $ do
+    let errStr = "Missing required present mode PRESENT_MODE_IMMEDIATE_KHR."
+    lift . debug $ errStr
+    fail errStr
+  lift . debug . printf $ "Found compatible present mode."
 
   return SwapChainSupport
 

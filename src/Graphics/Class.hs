@@ -3,6 +3,7 @@ module Graphics.Class (
   Log(..),
   LogLevel(..),
 
+  trace,
   debug,
   info,
   warn,
@@ -13,13 +14,16 @@ class MonadLogger m where
   loggerLevel :: m LogLevel
   loggerLog :: Log -> m ()
 
-data LogLevel = LogDebug | LogInfo | LogWarn | LogError | LogNone
+data LogLevel = LogTrace | LogDebug | LogInfo | LogWarn | LogError | LogNone
  deriving (Eq, Ord, Show)
 
 data Log = Log {
     logLevel :: LogLevel,
     logMessage :: String
   }
+
+trace :: MonadLogger m => String -> m ()
+trace = loggerLog . Log LogTrace
 
 debug :: MonadLogger m => String -> m ()
 debug = loggerLog . Log LogDebug
