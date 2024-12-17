@@ -29,7 +29,7 @@ initialise window = runMaybeT $ do
   lift $ debug "Creating surface..."
   surface <- liftIO $ getWindowSurface window vkInstance
   lift $ debug "Creating logical device..."
-  device <- MaybeT $ createDevice vkInstance surface
+  device <- MaybeT $ createDevice vkInstance window surface
   return $ GraphicsEnv device surface vkInstance
 
 cleanup :: (MonadIO m, MonadLogger m) => GraphicsEnv -> m ()

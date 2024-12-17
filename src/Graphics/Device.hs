@@ -17,9 +17,12 @@ import Data.Ord
 import Data.Word
 import Data.Vector (Vector)
 import qualified Data.Vector as V
+import qualified Graphics.UI.GLFW as GLFW
 import Text.Printf
 import qualified Vulkan as Vk
 import qualified Vulkan.Zero as Vk
+import qualified Vulkan.Extensions.VK_KHR_surface as VkSurface
+import qualified Vulkan.Core10.FundamentalTypes as VkExtent2D (Extent2D(..))
 import Vulkan.CStruct.Extends
 import Witherable
 
@@ -36,10 +39,11 @@ requiredDeviceExtensions = [Vk.KHR_SWAPCHAIN_EXTENSION_NAME]
 
 createDevice :: (MonadIO m, MonadLogger m)
   => Vk.Instance
+  -> GLFW.Window
   -> Vk.SurfaceKHR
   -> m (Maybe Device)
-createDevice vkInstance surface = runMaybeT $ do
-  devices <- lift $ getSuitableDevices vkInstance surface
+createDevice vkInstance window surface = runMaybeT $ do
+  devices <- lift $ getSuitableDevices vkInstance window surface
 
   PhysicalDevice{..} <- hoistMaybe . listToMaybe $ devices
   let deviceHandle = physicalDeviceHandle
@@ -88,9 +92,10 @@ data SwapChainSupport = SwapChainSupport {
 -- sorted by a suitability score.
 getSuitableDevices :: (MonadIO m, MonadLogger m)
   => Vk.Instance
+  -> GLFW.Window
   -> Vk.SurfaceKHR
   -> m [PhysicalDevice]
-getSuitableDevices vkInstance surface = do
+getSuitableDevices vkInstance window surface = do
   (_, devices) <- Vk.enumeratePhysicalDevices vkInstance
   debug . printf "%d devices found." . V.length $ devices
 
@@ -125,7 +130,7 @@ getSuitableDevices vkInstance surface = do
     lift . debug . printf "Chosen queue family %d." $ queueFamilyIndex
 
     -- Get the surface capabilities, formats and present modes.
-    swapChainSupport <- getDeviceSwapChainSupport surface device
+    swapChainSupport <- getDeviceSwapChainSupport device window surface
 
     let physicalDevice = PhysicalDevice device properties queueFamilyIndex
                            swapChainSupport
@@ -157,10 +162,11 @@ scoreSuitability device =
 --   its not available.
 --
 getDeviceSwapChainSupport :: (MonadIO m, MonadLogger m)
-  => Vk.SurfaceKHR
-  -> Vk.PhysicalDevice
+  => Vk.PhysicalDevice
+  -> GLFW.Window
+  -> Vk.SurfaceKHR
   -> MaybeT m SwapChainSupport
-getDeviceSwapChainSupport surface device = do
+getDeviceSwapChainSupport device window surface = do
   -- Note that we've already checked if there is a queue family that supports
   -- the VK_KHR_surface extension on this device as required by
   -- `vkGetPhysicalDeviceSurfaceCapabilitiesKHR`.
@@ -168,6 +174,32 @@ getDeviceSwapChainSupport surface device = do
   surfaceCapabilities <- Vk.getPhysicalDeviceSurfaceCapabilitiesKHR device
                            surface
   lift . trace . show $ surfaceCapabilities
+
+  -- Calculate the swap image extent.
+  lift . debug $ "Calculating swap image extent."
+  let surfaceCurrentExtent = VkSurface.currentExtent surfaceCapabilities
+  (extentWidth, extentHeight) <-
+    if VkExtent2D.width surfaceCurrentExtent /= maxBound
+      then return (
+               VkExtent2D.width surfaceCurrentExtent,
+               VkExtent2D.height surfaceCurrentExtent
+             )
+      else do
+        -- We get the frame buffer size rather than the original window size
+        -- so we get device pixels.
+        (frameBufferWidth, frameBufferHeight)
+          <- liftIO $ GLFW.getFramebufferSize window
+        let minImageExtent = VkSurface.minImageExtent surfaceCapabilities
+            maxImageExtent = VkSurface.maxImageExtent surfaceCapabilities
+            widthBounds = (VkExtent2D.width minImageExtent,
+                           VkExtent2D.width maxImageExtent)
+            heightBounds = (VkExtent2D.height minImageExtent,
+                            VkExtent2D.height maxImageExtent)
+        return (
+            clamp widthBounds . fromIntegral $ frameBufferWidth,
+            clamp heightBounds . fromIntegral $ frameBufferHeight
+          )
+  lift . debug . printf "Got extent %dpx × %dpx." extentWidth $ extentHeight
 
   -- Make sure we have the surface format we're looking for, abort if not.
   lift . debug $ "Checking device surface formats."
