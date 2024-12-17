@@ -34,7 +34,7 @@ data Device = Device {
 requiredDeviceExtensions :: [ByteString]
 requiredDeviceExtensions = [Vk.KHR_SWAPCHAIN_EXTENSION_NAME]
 
-createDevice :: (MonadIO m, Logger m)
+createDevice :: (MonadIO m, MonadLogger m)
   => Vk.Instance
   -> Vk.SurfaceKHR
   -> m (Maybe Device)
@@ -86,7 +86,7 @@ data SwapChainSupport = SwapChainSupport {
 
 -- Returns a list of physical devices that have support everything we need
 -- sorted by a suitability score.
-getSuitableDevices :: (MonadIO m, Logger m)
+getSuitableDevices :: (MonadIO m, MonadLogger m)
   => Vk.Instance
   -> Vk.SurfaceKHR
   -> m [PhysicalDevice]
@@ -154,7 +154,7 @@ scoreSuitability device =
 --
 --   which is 99.9% supported on Windows.
 --
-getDeviceSwapChainSupport :: (MonadIO m, Logger m)
+getDeviceSwapChainSupport :: (MonadIO m, MonadLogger m)
   => Vk.SurfaceKHR
   -> Vk.PhysicalDevice
   -> MaybeT m SwapChainSupport
@@ -189,7 +189,7 @@ getDeviceSwapChainSupport surface device = do
 
 -- Checks a device has at least one queue family that can do everything we want
 -- and pick it. This is pretty much always going to be the case.
-findSuitableQueueFamilyIndex :: forall m. (MonadIO m, Logger m)
+findSuitableQueueFamilyIndex :: forall m. (MonadIO m, MonadLogger m)
   => Vk.SurfaceKHR
   -> Vk.PhysicalDevice
   -> Vector Vk.QueueFamilyProperties
