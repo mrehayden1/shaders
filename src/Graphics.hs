@@ -22,7 +22,9 @@ data GraphicsEnv = GraphicsEnv {
     graphicsVkInstance :: Vk.Instance
   }
 
-initialise :: (MonadIO m, MonadLogger m) => GLFW.Window -> m (Maybe GraphicsEnv)
+initialise :: (MonadIO m, MonadLogger m)
+  => GLFW.Window
+  -> m (Maybe GraphicsEnv)
 initialise window = runMaybeT $ do
   lift $ debug "Creating Vulkan instance..."
   vkInstance <- liftIO createInstance
@@ -37,7 +39,7 @@ cleanup GraphicsEnv{..} = do
   info "Cleaning up graphics..."
   debug "Destroying surface."
   Vk.destroySurfaceKHR graphicsVkInstance graphicsSurface Nothing
-  debug "Destroying logical device."
+
   destroyDevice graphicsDevice
   debug "Destroying Vulkan instance."
   Vk.destroyInstance graphicsVkInstance Nothing
