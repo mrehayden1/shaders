@@ -21,6 +21,7 @@ import qualified Data.Vector as V
 import qualified Graphics.UI.GLFW as GLFW
 import Text.Printf
 import qualified Vulkan.Core10 as Vk
+import qualified Vulkan.Core10.ImageView as VkImageView
 import qualified Vulkan.Zero as Vk
 import qualified Vulkan.Extensions.VK_KHR_swapchain as VkSwapChain
 import qualified Vulkan.Extensions.VK_KHR_surface as VkSurface
@@ -43,7 +44,8 @@ data SwapChain = SwapChain {
   swapChainVkHandle :: VkSwapChain.SwapchainKHR,
   swapChainExtent :: VkExtent2D.Extent2D,
   swapChainFormat :: VkSurface.SurfaceFormatKHR,
-  swapChainImages :: Vector Vk.Image
+  swapChainImages :: Vector Vk.Image,
+  swapChainImageViews :: Vector VkImageView.ImageView
 } deriving (Show)
 
 requiredDeviceExtensions :: [ByteString]
@@ -82,14 +84,17 @@ createDevice vkInstance window surface = runMaybeT $ do
   vkDevice <- Vk.createDevice deviceHandle deviceCreateInfo Nothing
   queue <- Vk.getDeviceQueue vkDevice physicalDeviceQueueFamilyIndex 0
 
+  -- Create swap chain
   lift . debug $ "Creating swap chain."
+  let swapChainImageFormat = VkSurface.format
+        . swapSettingsSurfaceFormat $ physicalDeviceSwapChainSettings
+
   let swapChainCreateInfo = Vk.zero {
           VkSwapChain.flags = Vk.zero,
           VkSwapChain.surface = surface,
           VkSwapChain.minImageCount =
             swapSettingsImageCount physicalDeviceSwapChainSettings,
-          VkSwapChain.imageFormat = VkSurface.format
-            . swapSettingsSurfaceFormat $ physicalDeviceSwapChainSettings,
+          VkSwapChain.imageFormat = swapChainImageFormat,
           VkSwapChain.imageColorSpace = VkSurface.colorSpace
             . swapSettingsSurfaceFormat $ physicalDeviceSwapChainSettings,
           VkSwapChain.imageExtent = swapSettingsExtent
@@ -111,6 +116,7 @@ createDevice vkInstance window surface = runMaybeT $ do
                             swapChainCreateInfo
                             Nothing
 
+  -- Create swap chain images and image views.
   lift . debug $ "Retrieving swap chain images."
   (result, swapImages) <- VkSwapChain.getSwapchainImagesKHR
                             vkDevice
@@ -118,23 +124,48 @@ createDevice vkInstance window surface = runMaybeT $ do
   when (result == Vk.INCOMPLETE) $
     lift $ warn "Vulkan API returned incomplete swap chain images list."
 
+  lift . debug $ "Creating swap chain image views."
+  swapImageViews <- forM swapImages $ \image -> do
+    let imageViewCreateInfo = Vk.zero {
+            VkImageView.format = swapChainImageFormat,
+            VkImageView.image = image,
+            VkImageView.subresourceRange = Vk.zero {
+                VkImageView.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
+                VkImageView.layerCount = 1,
+                VkImageView.levelCount = 1
+              },
+            VkImageView.viewType = VkImageView.IMAGE_VIEW_TYPE_2D
+          }
+    Vk.createImageView vkDevice imageViewCreateInfo Nothing
+
   let swapChain = SwapChain {
           swapChainVkHandle = vkSwapChain,
           swapChainExtent = swapSettingsExtent physicalDeviceSwapChainSettings,
           swapChainFormat =
             swapSettingsSurfaceFormat physicalDeviceSwapChainSettings,
-          swapChainImages = swapImages
+          swapChainImages = swapImages,
+          swapChainImageViews = swapImageViews
         }
 
   return . Device vkDevice queue $ swapChain
 
-destroyDevice :: (MonadIO m, MonadLogger m) => Device -> m ()
-destroyDevice Device{..} = do
+destroySwapChain :: (MonadIO m, MonadLogger m)
+  => Vk.Device
+  -> SwapChain
+  -> m ()
+destroySwapChain vkDevice SwapChain{..} = do
+  debug "Destroying swap chain image views."
+  forM_ swapChainImageViews $ \i ->
+    VkImageView.destroyImageView vkDevice i Nothing
   debug "Destroying swap chain."
   VkSwapChain.destroySwapchainKHR
-    deviceVkDevice
-    (swapChainVkHandle deviceSwapChain)
+    vkDevice
+    swapChainVkHandle
     Nothing
+
+destroyDevice :: (MonadIO m, MonadLogger m) => Device -> m ()
+destroyDevice Device{..} = do
+  destroySwapChain deviceVkDevice deviceSwapChain
   debug "Destroying logical device."
   Vk.destroyDevice deviceVkDevice Nothing
 
