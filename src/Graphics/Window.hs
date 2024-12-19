@@ -1,19 +1,36 @@
 module Graphics.Window (
-  getWindowSurface
+  createWindowSurface
 ) where
 
-import Control.Exception
+import Control.Monad.Codensity
+import Control.Monad.Exception
+import Control.Monad.IO.Class
 import Control.Monad
 import Foreign
 import qualified Graphics.UI.GLFW as GLFW
 import qualified Vulkan as Vk
 import qualified Vulkan.Exception as Vk
 
-getWindowSurface :: GLFW.Window -> Vk.Instance -> IO Vk.SurfaceKHR
-getWindowSurface window vkInstance = do
-  let instPtr = castPtr $ Vk.instanceHandle vkInstance
-  alloca $ \surfacePtr -> do
-    res <- Vk.Result <$> GLFW.createWindowSurface instPtr window nullPtr surfacePtr
-    -- Throw an exception on error the same way our Vulkan bindings do.
-    when (res < Vk.SUCCESS) . throwIO . Vk.VulkanException $ res
-    peek surfacePtr
+import Graphics.Class
+
+createWindowSurface :: (MonadAsyncException m, MonadLogger m)
+  => GLFW.Window
+  -> Vk.Instance
+  -> Codensity m Vk.SurfaceKHR
+createWindowSurface window vkInstance = do
+  Codensity $ bracket createWindowSurface' destroyWindowSurface
+ where
+  createWindowSurface' = do
+    debug "Creating surface..."
+    let instancePtr = castPtr $ Vk.instanceHandle vkInstance
+    liftIO . alloca $ \surfacePtr -> do
+      res <- fmap Vk.Result
+        . liftIO . GLFW.createWindowSurface instancePtr window nullPtr
+        $ surfacePtr
+      -- Throw an exception on error the same way our Vulkan bindings do.
+      when (res < Vk.SUCCESS) . liftIO . throw . Vk.VulkanException $ res
+      peek surfacePtr
+
+  destroyWindowSurface surface = do
+    debug "Destroying window surface."
+    Vk.destroySurfaceKHR vkInstance surface Nothing

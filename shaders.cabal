@@ -28,6 +28,8 @@ library
       Graphics
       Graphics.Class
       Graphics.Device
+      Graphics.Device.Physical
+      Graphics.Device.SwapChain
       Graphics.Instance
       Graphics.Window
   other-modules:
@@ -43,6 +45,8 @@ library
       GLFW-b
     , base >=4.16.4 && <5
     , bytestring
+    , exception-transformers
+    , kan-extensions
     , mtl
     , transformers
     , utf8-string

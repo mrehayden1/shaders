@@ -43,6 +43,8 @@ library:
   dependencies:
   - GLFW-b
   - bytestring
+  - exception-transformers
+  - kan-extensions
   - mtl
   - transformers
   - utf8-string

@@ -1,13 +1,12 @@
 module Graphics (
   module Graphics.Class,
+  GraphicsEnv,
 
-  initialise,
-  cleanup
+  initialise
 ) where
 
-import Control.Monad.IO.Class
-import Control.Monad.Trans
-import Control.Monad.Trans.Maybe
+import Control.Monad.Codensity
+import Control.Monad.Exception
 import qualified Graphics.UI.GLFW as GLFW
 import qualified Vulkan as Vk
 
@@ -22,24 +21,12 @@ data GraphicsEnv = GraphicsEnv {
     graphicsVkInstance :: Vk.Instance
   }
 
-initialise :: (MonadIO m, MonadLogger m)
+initialise :: (MonadAsyncException m, MonadLogger m)
   => GLFW.Window
-  -> m (Maybe GraphicsEnv)
-initialise window = runMaybeT $ do
-  lift $ debug "Creating Vulkan instance..."
-  vkInstance <- liftIO createInstance
-  lift $ debug "Creating surface..."
-  surface <- liftIO $ getWindowSurface window vkInstance
-  lift $ debug "Creating logical device..."
-  device <- MaybeT $ createDevice vkInstance window surface
-  return $ GraphicsEnv device surface vkInstance
-
-cleanup :: (MonadIO m, MonadLogger m) => GraphicsEnv -> m ()
-cleanup GraphicsEnv{..} = do
-  info "Cleaning up graphics..."
-  debug "Destroying surface."
-  Vk.destroySurfaceKHR graphicsVkInstance graphicsSurface Nothing
-
-  destroyDevice graphicsDevice
-  debug "Destroying Vulkan instance."
-  Vk.destroyInstance graphicsVkInstance Nothing
+  -> Codensity m (Maybe GraphicsEnv)
+initialise window = do
+  vkInstance <- createInstance
+  surface <- createWindowSurface window vkInstance
+  debug "Creating logical device..."
+  mDevice <- createDevice vkInstance window surface
+  return $ (\device -> GraphicsEnv device surface vkInstance) <$> mDevice

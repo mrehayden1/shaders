@@ -2,6 +2,8 @@ module Graphics.Instance (
   createInstance
 ) where
 
+import Control.Monad.Codensity
+import Control.Monad.Exception
 import Control.Monad.IO.Class
 import Data.ByteString
 import Data.List (union)
@@ -10,21 +12,31 @@ import qualified Graphics.UI.GLFW as GLFW
 import qualified Vulkan as Vk
 import qualified Vulkan.Zero as Vk
 
-createInstance :: IO Vk.Instance
+import Graphics.Class
+
+createInstance :: (MonadAsyncException m, MonadLogger m)
+  => Codensity m Vk.Instance
 createInstance = do
-  let appInfo = Vk.ApplicationInfo Nothing 0 Nothing 0 Vk.API_VERSION_1_3
+  Codensity $ bracket createInstance' destroyInstance
 
-  windowInstanceExtensions <- mapM packCString
-    =<< GLFW.getRequiredInstanceExtensions
+ where
+  createInstance' = do
+    let appInfo = Vk.ApplicationInfo Nothing 0 Nothing 0 Vk.API_VERSION_1_3
 
-  -- Window extensions *should* always contain VK_KHR_surface, but we'll add it
-  -- anyway just in case, because our code needs it later.
-  let extraInstanceExtensions = [Vk.KHR_SURFACE_EXTENSION_NAME]
+    windowInstanceExtensions <- liftIO $
+      mapM packCString =<< GLFW.getRequiredInstanceExtensions
 
-  let requiredExtensions = V.fromList
-        . (extraInstanceExtensions `union`) $ windowInstanceExtensions
+    -- Window extensions *should* always contain VK_KHR_surface, but we'll add
+    -- it anyway since we'll need it later.
+    let extraInstanceExtensions = [Vk.KHR_SURFACE_EXTENSION_NAME]
+        requiredExtensions = V.fromList
+          . (extraInstanceExtensions `union`) $ windowInstanceExtensions
+        instanceInfo = Vk.InstanceCreateInfo () Vk.zero (Just appInfo) V.empty
+                         requiredExtensions
 
-  let instanceInfo = Vk.InstanceCreateInfo () Vk.zero (Just appInfo) V.empty
-                       requiredExtensions
+    debug "Creating Vulkan instance..."
+    Vk.createInstance instanceInfo Nothing
 
-  liftIO $ Vk.createInstance instanceInfo Nothing
+  destroyInstance vkInstance = do
+    debug "Destroying Vulkan instance."
+    Vk.destroyInstance vkInstance Nothing

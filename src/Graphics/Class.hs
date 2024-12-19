@@ -7,8 +7,14 @@ module Graphics.Class (
   debug,
   info,
   warn,
-  err
+  err,
+
+  hoistMaybe
 ) where
+
+import Control.Monad.Codensity
+import Control.Monad.Trans
+import Control.Monad.Trans.Maybe
 
 class MonadLogger m where
   loggerLevel :: m LogLevel
@@ -36,3 +42,16 @@ warn = loggerLog . Log LogWarn
 
 err :: MonadLogger m => String -> m ()
 err = loggerLog . Log LogError
+
+
+instance (Monad m, MonadLogger m) => MonadLogger (Codensity m) where
+  loggerLevel = lift loggerLevel
+  loggerLog = lift . loggerLog
+
+instance (Monad m, MonadLogger m) => MonadLogger (MaybeT m) where
+  loggerLevel = lift loggerLevel
+  loggerLog = lift . loggerLog
+
+
+hoistMaybe :: Applicative m => Maybe a -> MaybeT m a
+hoistMaybe = MaybeT . pure
