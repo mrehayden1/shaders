@@ -5,6 +5,20 @@
 
 packages:
 - completed:
+    hackage: shaderc-0.1.0.5@sha256:abd04455e790464abf492d2f679a50c11ba9d9fbde034279c7cb9615bd8e563a,2241
+    pantry-tree:
+      sha256: 21170a1c6843f2555cf2313c3d842ece6a330f007a7f7f78de709bc1578aa5e7
+      size: 1402
+  original:
+    hackage: shaderc-0.1.0.5
+- completed:
+    hackage: typelevel-tools-yj-0.1.0.7@sha256:0b89bf7fb7da65e6f52f0fcc961a2713d7eaecba55a712aa214af243446b5f80,2287
+    pantry-tree:
+      sha256: a2de5d4ed57fb2a91fe7c00716c9594a1a52d5325b7d5a0c9394d52e1d075b49
+      size: 1395
+  original:
+    hackage: typelevel-tools-yj-0.1.0.7
+- completed:
     hackage: vulkan-3.26.2@sha256:c7a94853a5db59978b4dba7a461f4503d0d6ed5647a46c42c77ba7d01bdb479e,33892
     pantry-tree:
       sha256: 76183a8a935a3cbe765e90e42aeb04c83fe2d50694ba18124036dc6364a99eb4

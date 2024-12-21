@@ -30,13 +30,16 @@ library
       Graphics.Device
       Graphics.Device.Physical
       Graphics.Device.SwapChain
+      Graphics.FrameBuffer
       Graphics.Instance
+      Graphics.Pipeline
       Graphics.Window
   other-modules:
       Paths_shaders
   hs-source-dirs:
       src
   default-extensions:
+      DataKinds
       OverloadedStrings
       RecordWildCards
       ScopedTypeVariables
@@ -45,9 +48,12 @@ library
       GLFW-b
     , base >=4.16.4 && <5
     , bytestring
+    , data-default
     , exception-transformers
     , kan-extensions
+    , language-spir-v
     , mtl
+    , shaderc
     , transformers
     , utf8-string
     , vector
@@ -63,6 +69,7 @@ test-suite shaders-test
   hs-source-dirs:
       test
   default-extensions:
+      DataKinds
       OverloadedStrings
       RecordWildCards
       ScopedTypeVariables

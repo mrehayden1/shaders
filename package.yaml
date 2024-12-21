@@ -23,6 +23,7 @@ dependencies:
 - base >= 4.16.4 && < 5
 
 default-extensions:
+- DataKinds
 - OverloadedStrings
 - RecordWildCards
 - ScopedTypeVariables
@@ -44,9 +45,12 @@ library:
   - GLFW-b
   - bytestring
   - exception-transformers
+  - data-default
   - kan-extensions
+  - language-spir-v
   - mtl
   - transformers
+  - shaderc
   - utf8-string
   - vector
   - vulkan
