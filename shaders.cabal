@@ -30,7 +30,7 @@ library
       Graphics.Device
       Graphics.Device.Physical
       Graphics.Device.SwapChain
-      Graphics.FrameBuffer
+      Graphics.Framebuffer
       Graphics.Instance
       Graphics.Pipeline
       Graphics.Window

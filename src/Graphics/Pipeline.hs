@@ -23,12 +23,12 @@ import qualified Vulkan.Zero as Vk
 
 import Graphics.Class
 import Graphics.Device
-import Graphics.FrameBuffer
 
 createPipeline :: (MonadAsyncException m, MonadLogger m)
   => Device
+  -> Vk.RenderPass
   -> Codensity m VkPipeline.Pipeline
-createPipeline device@Device{..} = do
+createPipeline Device{..} renderPass = do
 
   vertexShaderModule <- createVertexShader deviceVkDevice
   fragmentShaderModule <- createFragmentShader deviceVkDevice
@@ -39,8 +39,6 @@ createPipeline device@Device{..} = do
     (\l -> do
       debug "Destroying pipeline layout."
       Vk.destroyPipelineLayout deviceVkDevice l Nothing)
-
-  renderPass <- createRenderPass device
 
   let pipelineCreateInfos = V.singleton . SomeStruct $ Vk.zero {
           VkPipeline.colorBlendState = Just . SomeStruct $ Vk.zero {

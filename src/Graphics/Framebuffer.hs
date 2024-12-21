@@ -1,12 +1,19 @@
-module Graphics.FrameBuffer (
-  createRenderPass
+module Graphics.Framebuffer (
+  createRenderPass,
+  createFramebuffers
 ) where
 
+import Control.Monad
 import Control.Monad.Codensity
 import Control.Monad.Exception
+import Data.Vector (Vector)
 import qualified Data.Vector as V
 import qualified Vulkan.Core10 as Vk
-import qualified Vulkan.Core10.Pass as VkPass hiding (FramebufferCreateInfo(..))
+import qualified Vulkan.Core10.FundamentalTypes as VkExtent2D (Extent2D(..))
+import qualified Vulkan.Core10.Pass as VkPass hiding (
+  FramebufferCreateInfo(..))
+import qualified Vulkan.Core10.Pass as VkFramebuffer hiding (
+  RenderPassCreateInfo(..))
 import qualified Vulkan.Extensions.VK_KHR_surface as VkSurface
 import qualified Vulkan.Zero as Vk
 
@@ -45,7 +52,31 @@ createRenderPass Device{..} = do
 
   Codensity $ bracket
     (VkPass.createRenderPass deviceVkDevice passCreateInfo Nothing)
-    (\p-> do
+    (\p -> do
        debug "Destroying render pass."
        VkPass.destroyRenderPass deviceVkDevice p Nothing
+    )
+
+createFramebuffers :: (MonadAsyncException m, MonadLogger m)
+  => Device
+  -> Vk.RenderPass
+  -> Codensity m (Vector Vk.Framebuffer)
+createFramebuffers Device{..} renderPass = do
+  debug "Creating framebuffers."
+  let SwapChain{..} = deviceSwapChain
+  Codensity $ bracket
+    (forM swapChainImageViews $ \imageView -> do
+        let framebufferCreateInfo = Vk.zero {
+          VkFramebuffer.attachments = V.singleton imageView,
+          VkFramebuffer.height = VkExtent2D.height swapChainExtent,
+          VkFramebuffer.layers = 1,
+          VkFramebuffer.renderPass = renderPass,
+          VkFramebuffer.width = VkExtent2D.width swapChainExtent
+        }
+        VkFramebuffer.createFramebuffer deviceVkDevice framebufferCreateInfo Nothing
+    )
+    (\framebuffers -> do
+       debug "Destroying framebuffers."
+       forM_ framebuffers $ \framebuffer ->
+         VkFramebuffer.destroyFramebuffer deviceVkDevice framebuffer Nothing
     )

@@ -14,6 +14,7 @@ import qualified Vulkan as Vk
 
 import Graphics.Class
 import Graphics.Device
+import Graphics.Framebuffer
 import Graphics.Instance
 import Graphics.Pipeline
 import Graphics.Window
@@ -31,5 +32,7 @@ initialise window = runMaybeT $ do
   vkInstance <- lift createInstance
   vkSurface <- lift $ createWindowSurface window vkInstance
   device <- MaybeT $ createDevice vkInstance window vkSurface
-  pipeline <- lift . createPipeline $ device
+  renderPass <- lift $ createRenderPass device
+  pipeline <- lift . createPipeline device $ renderPass
+  frameBuffers <- lift . createFramebuffers device $ renderPass
   return $ GraphicsEnv device vkSurface vkInstance
