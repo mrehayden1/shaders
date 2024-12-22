@@ -1,4 +1,4 @@
-module Graphics.Framebuffer (
+module Graphics.Shaders.Framebuffer (
   createRenderPass,
   createFramebuffers
 ) where
@@ -17,8 +17,8 @@ import qualified Vulkan.Core10.Pass as VkFramebuffer hiding (
 import qualified Vulkan.Extensions.VK_KHR_surface as VkSurface
 import qualified Vulkan.Zero as Vk
 
-import Graphics.Class
-import Graphics.Device
+import Graphics.Shaders.Class
+import Graphics.Shaders.Device
 
 createRenderPass :: (MonadAsyncException m, MonadLogger m)
   => Device

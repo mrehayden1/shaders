@@ -25,17 +25,17 @@ source-repository head
 
 library
   exposed-modules:
-      Graphics
-      Graphics.Class
-      Graphics.CommandBuffer
-      Graphics.Device
-      Graphics.Device.Physical
-      Graphics.Device.SwapChain
-      Graphics.Framebuffer
-      Graphics.Instance
-      Graphics.Pipeline
-      Graphics.Sync
-      Graphics.Window
+      Graphics.Shaders
+      Graphics.Shaders.Class
+      Graphics.Shaders.CommandBuffer
+      Graphics.Shaders.Device
+      Graphics.Shaders.Device.Physical
+      Graphics.Shaders.Device.SwapChain
+      Graphics.Shaders.Framebuffer
+      Graphics.Shaders.Instance
+      Graphics.Shaders.Pipeline
+      Graphics.Shaders.Sync
+      Graphics.Shaders.Window
   other-modules:
       Paths_shaders
   hs-source-dirs:

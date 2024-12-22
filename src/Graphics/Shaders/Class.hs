@@ -1,4 +1,4 @@
-module Graphics.Class (
+module Graphics.Shaders.Class (
   MonadLogger(..),
   Log(..),
   LogLevel(..),

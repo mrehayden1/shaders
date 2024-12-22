@@ -1,4 +1,4 @@
-module Graphics.Sync (
+module Graphics.Shaders.Sync (
   SyncObjects(..),
   createSyncObjects
 ) where
@@ -10,8 +10,8 @@ import qualified Vulkan.Core10.Fence as VkFence
 import qualified Vulkan.Core10.QueueSemaphore as VkSemaphore
 import qualified Vulkan.Zero as Vk
 
-import Graphics.Class
-import Graphics.Device
+import Graphics.Shaders.Class
+import Graphics.Shaders.Device
 
 data SyncObjects = SyncObjects {
    syncImageAvailableSemaphore :: Vk.Semaphore,

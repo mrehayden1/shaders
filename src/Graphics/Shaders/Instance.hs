@@ -1,4 +1,4 @@
-module Graphics.Instance (
+module Graphics.Shaders.Instance (
   createInstance
 ) where
 
@@ -12,7 +12,7 @@ import qualified Graphics.UI.GLFW as GLFW
 import qualified Vulkan as Vk
 import qualified Vulkan.Zero as Vk
 
-import Graphics.Class
+import Graphics.Shaders.Class
 
 createInstance :: (MonadAsyncException m, MonadLogger m)
   => Codensity m Vk.Instance

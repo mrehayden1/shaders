@@ -1,4 +1,4 @@
-module Graphics.CommandBuffer (
+module Graphics.Shaders.CommandBuffer (
   createCommandBuffer,
 
   recordCommandBuffer
@@ -22,8 +22,8 @@ import qualified Vulkan.Core10.FundamentalTypes as VkRect2D (Rect2D(..))
 import qualified Vulkan.Core10.Pipeline as VkPipeline
 import qualified Vulkan.Zero as Vk
 
-import Graphics.Class
-import Graphics.Device
+import Graphics.Shaders.Class
+import Graphics.Shaders.Device
 
 createCommandPool :: (MonadAsyncException m, MonadLogger m)
   => Device

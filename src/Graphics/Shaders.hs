@@ -1,5 +1,5 @@
-module Graphics (
-  module Graphics.Class,
+module Graphics.Shaders (
+  module Graphics.Shaders.Class,
   GraphicsEnv,
 
   initialise,
@@ -22,14 +22,14 @@ import qualified Vulkan.CStruct.Extends as Vk
 import qualified Vulkan.Extensions.VK_KHR_swapchain as VkSwap
 import qualified Vulkan.Zero as Vk
 
-import Graphics.Class
-import Graphics.CommandBuffer
-import Graphics.Device
-import Graphics.Framebuffer
-import Graphics.Instance
-import Graphics.Pipeline
-import Graphics.Sync
-import Graphics.Window
+import Graphics.Shaders.Class
+import Graphics.Shaders.CommandBuffer
+import Graphics.Shaders.Device
+import Graphics.Shaders.Framebuffer
+import Graphics.Shaders.Instance
+import Graphics.Shaders.Pipeline
+import Graphics.Shaders.Sync
+import Graphics.Shaders.Window
 
 data GraphicsEnv = GraphicsEnv {
     graphicsCommandBuffer :: Vk.CommandBuffer,
