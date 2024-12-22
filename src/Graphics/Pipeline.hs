@@ -30,15 +30,15 @@ createPipeline :: (MonadAsyncException m, MonadLogger m)
   -> Codensity m VkPipeline.Pipeline
 createPipeline Device{..} renderPass = do
 
-  vertexShaderModule <- createVertexShader deviceVkDevice
-  fragmentShaderModule <- createFragmentShader deviceVkDevice
+  vertexShaderModule <- createVertexShader deviceHandle
+  fragmentShaderModule <- createFragmentShader deviceHandle
 
   debug "Creating pipeline layout."
   layout <- Codensity $ bracket
-    (Vk.createPipelineLayout deviceVkDevice Vk.zero Nothing)
+    (Vk.createPipelineLayout deviceHandle Vk.zero Nothing)
     (\l -> do
       debug "Destroying pipeline layout."
-      Vk.destroyPipelineLayout deviceVkDevice l Nothing)
+      Vk.destroyPipelineLayout deviceHandle l Nothing)
 
   let pipelineCreateInfos = V.singleton . SomeStruct $ Vk.zero {
           VkPipeline.colorBlendState = Just . SomeStruct $ Vk.zero {
@@ -94,7 +94,7 @@ createPipeline Device{..} renderPass = do
     -- We don't care about the result type since we're not preventing
     -- compilation.
     (do (result, pipelines) <-
-          VkPipeline.createGraphicsPipelines deviceVkDevice Vk.zero
+          VkPipeline.createGraphicsPipelines deviceHandle Vk.zero
             pipelineCreateInfos Nothing
         when (result /= Vk.SUCCESS) $
           warn . printf "Non success result: %s" . show $ result
@@ -102,7 +102,7 @@ createPipeline Device{..} renderPass = do
     )
     (\p -> do
       debug "Destroying pipeline."
-      VkPipeline.destroyPipeline deviceVkDevice p Nothing
+      VkPipeline.destroyPipeline deviceHandle p Nothing
     )
 
 createVertexShader :: (MonadAsyncException m, MonadLogger m)

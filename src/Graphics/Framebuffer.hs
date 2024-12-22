@@ -51,10 +51,10 @@ createRenderPass Device{..} = do
         }
 
   Codensity $ bracket
-    (VkPass.createRenderPass deviceVkDevice passCreateInfo Nothing)
+    (VkPass.createRenderPass deviceHandle passCreateInfo Nothing)
     (\p -> do
        debug "Destroying render pass."
-       VkPass.destroyRenderPass deviceVkDevice p Nothing
+       VkPass.destroyRenderPass deviceHandle p Nothing
     )
 
 createFramebuffers :: (MonadAsyncException m, MonadLogger m)
@@ -73,10 +73,10 @@ createFramebuffers Device{..} renderPass = do
           VkFramebuffer.renderPass = renderPass,
           VkFramebuffer.width = VkExtent2D.width swapChainExtent
         }
-        VkFramebuffer.createFramebuffer deviceVkDevice framebufferCreateInfo Nothing
+        VkFramebuffer.createFramebuffer deviceHandle framebufferCreateInfo Nothing
     )
     (\framebuffers -> do
        debug "Destroying framebuffers."
        forM_ framebuffers $ \framebuffer ->
-         VkFramebuffer.destroyFramebuffer deviceVkDevice framebuffer Nothing
+         VkFramebuffer.destroyFramebuffer deviceHandle framebuffer Nothing
     )

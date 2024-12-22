@@ -20,7 +20,7 @@ import Graphics.Device.Physical
 
 -- Information about the swap chain.
 data SwapChain = SwapChain {
-  swapChainVkHandle :: VkSwapChain.SwapchainKHR,
+  swapChainHandle :: VkSwapChain.SwapchainKHR,
   swapChainExtent :: VkExtent2D.Extent2D,
   swapChainFormat :: VkSurface.SurfaceFormatKHR,
   swapChainImages :: Vector Vk.Image,
@@ -92,7 +92,7 @@ createSwapChain surface vkDevice physicalDeviceSwapChainSettings = do
   swapImageViews <- Codensity $ bracket createImageViews (destroyImageViews vkDevice)
 
   return $ SwapChain {
-      swapChainVkHandle = vkSwapChain,
+      swapChainHandle = vkSwapChain,
       swapChainExtent = swapSettingsExtent physicalDeviceSwapChainSettings,
       swapChainFormat =
         swapSettingsSurfaceFormat physicalDeviceSwapChainSettings,

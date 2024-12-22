@@ -23,29 +23,29 @@ createSyncObjects :: (MonadAsyncException m, MonadLogger m)
   => Device
   -> Codensity m SyncObjects
 createSyncObjects Device{..} = do
-  debug "Creating image available semaphore"
+  debug "Creating image available semaphore."
   imageAvailableSemaphore <- Codensity $ bracket
-    (VkSemaphore.createSemaphore deviceVkDevice Vk.zero Nothing)
+    (VkSemaphore.createSemaphore deviceHandle Vk.zero Nothing)
     (\semaphore -> do
-       debug "Destroying image available semaphore"
-       VkSemaphore.destroySemaphore deviceVkDevice semaphore Nothing
+       debug "Destroying image available semaphore."
+       VkSemaphore.destroySemaphore deviceHandle semaphore Nothing
     )
-  debug "Creating render finished semaphore"
+  debug "Creating render finished semaphore."
   renderFinishedSemaphore <- Codensity $ bracket
-    (VkSemaphore.createSemaphore deviceVkDevice Vk.zero Nothing)
+    (VkSemaphore.createSemaphore deviceHandle Vk.zero Nothing)
     (\semaphore -> do
-       debug "Destroying render finished semaphore"
-       VkSemaphore.destroySemaphore deviceVkDevice semaphore Nothing
+       debug "Destroying render finished semaphore."
+       VkSemaphore.destroySemaphore deviceHandle semaphore Nothing
     )
-  debug "Creating in flight fence"
+  debug "Creating in flight fence."
   let inFlightFenceCreateInfo = Vk.zero {
           VkFence.flags = VkFence.FENCE_CREATE_SIGNALED_BIT
         }
   inFlightFence <- Codensity $ bracket
-    (VkFence.createFence deviceVkDevice inFlightFenceCreateInfo Nothing)
+    (VkFence.createFence deviceHandle inFlightFenceCreateInfo Nothing)
     (\fence -> do
-       debug "Destroying in flight fence"
-       VkFence.destroyFence deviceVkDevice fence Nothing
+       debug "Destroying in flight fence."
+       VkFence.destroyFence deviceHandle fence Nothing
     )
   return $ SyncObjects {
       syncImageAvailableSemaphore = imageAvailableSemaphore,

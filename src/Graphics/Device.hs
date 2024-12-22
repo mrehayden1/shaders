@@ -26,7 +26,7 @@ import Graphics.Device.SwapChain
 
 -- A graphics enabled logical device.
 data Device = Device {
-  deviceVkDevice :: Vk.Device,
+  deviceHandle :: Vk.Device,
   deviceQueueHandle :: Vk.Queue,
   deviceSwapChain :: SwapChain
 } deriving (Show)

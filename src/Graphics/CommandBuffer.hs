@@ -37,10 +37,10 @@ createCommandPool Device{..} queueFamilyIndex = do
 
   debug "Creating command pool."
   Codensity $ bracket
-    (VkPool.createCommandPool deviceVkDevice poolCreateInfo Nothing)
+    (VkPool.createCommandPool deviceHandle poolCreateInfo Nothing)
     (\pool -> do
        debug "Destroying command pool."
-       VkPool.destroyCommandPool deviceVkDevice pool Nothing)
+       VkPool.destroyCommandPool deviceHandle pool Nothing)
 
 createCommandBuffer :: (MonadAsyncException m, MonadLogger m)
   => Device
@@ -57,7 +57,7 @@ createCommandBuffer device@Device{..} queueFamilyIndex = do
 
   debug "Allocating command buffer."
   fmap V.head . lift
-    $ VkBuffer.allocateCommandBuffers deviceVkDevice commandBufferCreateInfo
+    $ VkBuffer.allocateCommandBuffers deviceHandle commandBufferCreateInfo
 
 recordCommandBuffer :: MonadIO m
   => Device
