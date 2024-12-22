@@ -3,6 +3,8 @@ module Main (
 ) where
 
 import Control.Monad
+import Control.Monad.Codensity
+import Control.Monad.Exception
 import Control.Monad.Reader
 import Data.Maybe
 import System.Exit
@@ -18,12 +20,12 @@ appVersion :: String
 appVersion = "0.1.0"
 
 appLoggingLevel :: LogLevel
-appLoggingLevel = LogNone
+appLoggingLevel = LogTrace
 
 
 newtype LoggerT m a = LoggerT {
     unLoggerT :: ReaderT LogLevel m a
-  } deriving (Functor, Applicative, Monad)
+  } deriving (Functor, Applicative, Monad, MonadException, MonadAsyncException)
 
 -- Local logging changes, useful for debugging.
 logger :: Monad m => LogLevel -> LoggerT m a -> LoggerT m a
@@ -52,29 +54,38 @@ instance MonadIO m => MonadLogger (LoggerT m) where
 
 
 main :: IO ()
-main = runLoggerT appLoggingLevel $ do
-  liftIO $ printf "\nStarting %s v%s...\n\n" appName appVersion
-  liftIO $ putStrLn "Copyright 2024 Categorical Industries.\n"
+main = do
+  printf "\nStarting %s v%s...\n\n" appName appVersion
+  putStrLn "Copyright 2024 Categorical Industries.\n"
 
-  window <- liftIO $ createWindow appName
+  runLoggerT appLoggingLevel . lowerCodensity $ do
+    liftIO $ putStrLn "Initialising graphics..."
 
-  liftIO $ putStrLn "Initialising graphics..."
+    debug "Creating window."
+    window <- Codensity $ bracket
+      (liftIO $ createWindow appName)
+      (\window -> do
+         debug "Destroying window."
+         liftIO $ destroyWindow window
+      )
 
-  mGraphics <- Graphics.initialise window
-  unless (isJust mGraphics) . liftIO $ do
-    putStrLn "Failed to initialise graphics"
-    exitFailure
-  let graphics = fromJust mGraphics
+    mGraphics <- Graphics.initialise window
+    unless (isJust mGraphics) . liftIO $ do
+      putStrLn "Failed to initialise graphics"
+      exitFailure
+    let graphics = fromJust mGraphics
 
-  liftIO $ putStrLn "Finished startup."
-  liftIO $ putStrLn "Running...\n"
+    liftIO $ putStrLn "Finished startup."
+    liftIO $ putStrLn "Running...\n"
 
-  fix $ \loop -> do
-    liftIO pollEvents
-    close <- liftIO $ windowShouldClose window
-    unless close loop
+    fix $ \loop -> do
+      lift $ Graphics.drawFrame graphics
+      liftIO pollEvents
+      close <- liftIO $ windowShouldClose window
+      unless close loop
 
-  liftIO $ putStrLn "Exiting..."
-  liftIO $ destroyWindow window
-  Graphics.cleanup graphics
-  liftIO $ putStrLn "Exited."
+    liftIO $ putStrLn "Exiting..."
+    debug "Awaiting idle."
+    awaitIdle graphics
+
+  putStrLn "Exited."
