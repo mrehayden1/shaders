@@ -134,9 +134,9 @@ createVertexShader device = do
     \   vec2(0.5, 0.5)\n\
     \ );\n\n\
     \ vec3 colors[3] = vec3[](\n\
-    \   vec3(1.0, 1.0, 0.0),\n\
-    \   vec3(1.0, 0.0, 1.0),\n\
-    \   vec3(0.0, 1.0, 1.0)\n\
+    \   vec3(1.0, 0.0, 0.0),\n\
+    \   vec3(0.0, 1.0, 0.0),\n\
+    \   vec3(0.0, 0.0, 1.0)\n\
     \ );\n\n\
     \ void main() {\n\
     \   gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);\n\

@@ -27,12 +27,14 @@ library
   exposed-modules:
       Graphics
       Graphics.Class
+      Graphics.CommandBuffer
       Graphics.Device
       Graphics.Device.Physical
       Graphics.Device.SwapChain
       Graphics.Framebuffer
       Graphics.Instance
       Graphics.Pipeline
+      Graphics.Sync
       Graphics.Window
   other-modules:
       Paths_shaders

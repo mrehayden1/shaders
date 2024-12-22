@@ -169,7 +169,7 @@ getSwapChainSupport device window surface = do
                         then maxBound
                         else VkSurface.maxImageCount surfaceCapabilities
       imageCount = min maxImageCount $ minImageCount + 1
-  debug . printf "Using %d swap images." $ imageCount
+  debug . printf "Choosing %d swap images." $ imageCount
 
   let transform = VkSurface.currentTransform surfaceCapabilities
   debug . printf "Using transform %s." . show $ transform

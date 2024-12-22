@@ -12,6 +12,7 @@ import Control.Monad.Trans
 import Control.Monad.Trans.Maybe
 import Data.ByteString.UTF8 as UTF8
 import qualified Data.Vector as V
+import Data.Word
 import qualified Graphics.UI.GLFW as GLFW
 import qualified Vulkan.Core10 as Vk
 import Vulkan.CStruct.Extends
@@ -37,7 +38,7 @@ createDevice :: (MonadAsyncException m, MonadLogger m)
   => Vk.Instance
   -> GLFW.Window
   -> VkSurface.SurfaceKHR
-  -> Codensity m (Maybe Device)
+  -> Codensity m (Maybe (Device, Word32))
 createDevice vkInstance window surface = runMaybeT $ do
   debug "Creating logical device..."
   devices <- lift $
@@ -79,7 +80,9 @@ createDevice vkInstance window surface = runMaybeT $ do
   swapChain <- lift $
     createSwapChain surface vkDevice physicalDeviceSwapChainSettings
 
-  return . Device vkDevice queue $ swapChain
+  let device = Device vkDevice queue swapChain
+
+  return (device, physicalDeviceQueueFamilyIndex)
 
 destroyDevice :: (MonadAsyncException m, MonadLogger m) => Vk.Device -> m ()
 destroyDevice device = do
