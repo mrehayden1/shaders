@@ -1,4 +1,4 @@
-module Graphics.Device (
+module Graphics.Shaders.Device (
   Device(..),
   SwapChain(..),
 
@@ -20,9 +20,9 @@ import qualified Vulkan.Extensions.VK_KHR_swapchain as VkSwapChain
 import qualified Vulkan.Extensions.VK_KHR_surface as VkSurface
 import qualified Vulkan.Zero as Vk
 
-import Graphics.Class
-import Graphics.Device.Physical
-import Graphics.Device.SwapChain
+import Graphics.Shaders.Class
+import Graphics.Shaders.Device.Physical
+import Graphics.Shaders.Device.SwapChain
 
 -- A graphics enabled logical device.
 data Device = Device {

@@ -1,4 +1,4 @@
-module Graphics.Pipeline (
+module Graphics.Shaders.Pipeline (
   createPipeline
 ) where
 
@@ -21,8 +21,8 @@ import qualified Vulkan.Core10.Pipeline as VkPipeline hiding (
 import Vulkan.CStruct.Extends (SomeStruct(..))
 import qualified Vulkan.Zero as Vk
 
-import Graphics.Class
-import Graphics.Device
+import Graphics.Shaders.Class
+import Graphics.Shaders.Device
 
 createPipeline :: (MonadAsyncException m, MonadLogger m)
   => Device

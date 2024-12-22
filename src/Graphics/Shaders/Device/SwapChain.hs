@@ -1,4 +1,4 @@
-module Graphics.Device.SwapChain (
+module Graphics.Shaders.Device.SwapChain (
   SwapChain(..),
   createSwapChain
 ) where
@@ -15,8 +15,8 @@ import qualified Vulkan.Extensions.VK_KHR_swapchain as VkSwapChain
 import qualified Vulkan.Extensions.VK_KHR_surface as VkSurface
 import qualified Vulkan.Zero as Vk
 
-import Graphics.Class
-import Graphics.Device.Physical
+import Graphics.Shaders.Class
+import Graphics.Shaders.Device.Physical
 
 -- Information about the swap chain.
 data SwapChain = SwapChain {

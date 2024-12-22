@@ -1,4 +1,4 @@
-module Graphics.Window (
+module Graphics.Shaders.Window (
   createWindowSurface
 ) where
 
@@ -11,7 +11,7 @@ import qualified Graphics.UI.GLFW as GLFW
 import qualified Vulkan as Vk
 import qualified Vulkan.Exception as Vk
 
-import Graphics.Class
+import Graphics.Shaders.Class
 
 createWindowSurface :: (MonadAsyncException m, MonadLogger m)
   => GLFW.Window
