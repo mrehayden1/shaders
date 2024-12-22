@@ -32,5 +32,5 @@ createWindowSurface window vkInstance = do
       peek surfacePtr
 
   destroyWindowSurface surface = do
-    debug "Destroying window surface."
+    debug "Destroying surface."
     Vk.destroySurfaceKHR vkInstance surface Nothing
