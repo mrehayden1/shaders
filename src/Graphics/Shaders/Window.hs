@@ -2,10 +2,10 @@ module Graphics.Shaders.Window (
   createWindowSurface
 ) where
 
+import Control.Monad
 import Control.Monad.Codensity
 import Control.Monad.Exception
 import Control.Monad.IO.Class
-import Control.Monad
 import Foreign
 import qualified Graphics.UI.GLFW as GLFW
 import qualified Vulkan as Vk
