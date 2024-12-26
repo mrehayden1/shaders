@@ -10,7 +10,7 @@ import Data.Maybe
 import System.Exit
 import Text.Printf
 
-import Graphics
+import Graphics.Shaders as G
 import Window
 
 appName :: String
@@ -69,7 +69,7 @@ main = do
          liftIO $ destroyWindow window
       )
 
-    mGraphics <- Graphics.initialise window
+    mGraphics <- G.initialise window
     unless (isJust mGraphics) . liftIO $ do
       putStrLn "Failed to initialise graphics"
       exitFailure
@@ -79,7 +79,7 @@ main = do
     liftIO $ putStrLn "Running...\n"
 
     fix $ \loop -> do
-      lift $ Graphics.drawFrame graphics
+      lift $ G.drawFrame graphics
       liftIO pollEvents
       close <- liftIO $ windowShouldClose window
       unless close loop

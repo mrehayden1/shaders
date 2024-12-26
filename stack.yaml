@@ -31,8 +31,6 @@ snapshot: lts-20.26
 packages:
 - .
 - ../shaders
-- ../language-spir-v
-- ../storable-peek-poke
 
 # Dependency packages to be pulled from upstream that are not in the snapshot.
 # These entries can reference officially published versions as well as
@@ -44,9 +42,9 @@ packages:
 #   commit: e7b331f14bcffb8367cd58fbfc8b40ec7642100a
 #
 extra-deps:
-#- language-spir-v-0.1.0.2
+- language-spir-v-0.1.0.3
 - shaderc-0.1.0.5
-#- storable-peek-poke-0.1.0.1
+- storable-peek-poke-0.1.0.2
 - typelevel-tools-yj-0.1.0.7
 - vulkan-3.26.2
 
