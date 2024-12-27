@@ -15,6 +15,7 @@ module Graphics.Shaders.Class (
 import Control.Monad.Codensity
 import Control.Monad.Trans
 import Control.Monad.Trans.Maybe
+import Control.Monad.Trans.State
 
 class MonadLogger m where
   loggerLevel :: m LogLevel
@@ -52,6 +53,9 @@ instance (Monad m, MonadLogger m) => MonadLogger (MaybeT m) where
   loggerLevel = lift loggerLevel
   loggerLog = lift . loggerLog
 
+instance (Monad m, MonadLogger m) => MonadLogger (StateT s m) where
+  loggerLevel = lift loggerLevel
+  loggerLog = lift . loggerLog
 
 hoistMaybe :: Applicative m => Maybe a -> MaybeT m a
 hoistMaybe = MaybeT . pure

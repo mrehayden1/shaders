@@ -42,6 +42,7 @@ library
       src
   default-extensions:
       DataKinds
+      FlexibleContexts
       OverloadedStrings
       RecordWildCards
       ScopedTypeVariables
@@ -72,6 +73,7 @@ test-suite shaders-test
       test
   default-extensions:
       DataKinds
+      FlexibleContexts
       OverloadedStrings
       RecordWildCards
       ScopedTypeVariables

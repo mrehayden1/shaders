@@ -10,7 +10,7 @@ module Graphics.Shaders (
 
 import Control.Monad.Codensity
 import Control.Monad.Exception
-import Control.Monad.Trans
+import Control.Monad.State
 import Control.Monad.Trans.Maybe
 import Data.Vector (Vector)
 import qualified Data.Vector as V
@@ -31,14 +31,22 @@ import Graphics.Shaders.Pipeline
 import Graphics.Shaders.Sync
 import Graphics.Shaders.Window
 
+framesInFlight :: Int
+framesInFlight = 2
+
 data GraphicsEnv = GraphicsEnv {
-    graphicsCommandBuffer :: Vk.CommandBuffer,
+    -- One command buffer per frame in flight
+    graphicsCommandBuffers :: Vector Vk.CommandBuffer,
     graphicsDevice :: Device,
+    -- One framebuffer per image in the swapchain
     graphicsFramebuffers :: Vector Vk.Framebuffer,
     graphicsPipeline :: Vk.Pipeline,
     graphicsRenderPass :: Vk.RenderPass,
-    graphicsSyncObjects :: SyncObjects
+    -- One `SyncObject` per frame in flight
+    graphicsSyncObjects :: Vector SyncObjects
   }
+
+type GraphicsState = Int
 
 initialise :: (MonadAsyncException m, MonadLogger m)
   => GLFW.Window
@@ -51,10 +59,12 @@ initialise window = runMaybeT $ do
   renderPass <- lift $ createRenderPass device
   pipeline <- lift . createPipeline device $ renderPass
   framebuffers <- lift . createFramebuffers device $ renderPass
-  commandBuffer <- lift $ createCommandBuffer device queueFamilyIndex
-  syncObjects <- lift $ createSyncObjects device
+  commandBuffers <- fmap V.fromList . lift . replicateM framesInFlight
+    $ createCommandBuffer device queueFamilyIndex
+  syncObjects <- fmap V.fromList . lift . replicateM framesInFlight
+    $ createSyncObjects device
   return $ GraphicsEnv {
-      graphicsCommandBuffer = commandBuffer,
+      graphicsCommandBuffers = commandBuffers,
       graphicsDevice = device,
       graphicsFramebuffers = framebuffers,
       graphicsPipeline = pipeline,
@@ -62,23 +72,29 @@ initialise window = runMaybeT $ do
       graphicsSyncObjects = syncObjects
     }
 
-drawFrame :: (MonadIO m, MonadLogger m) => GraphicsEnv -> m ()
+drawFrame :: (MonadIO m, MonadLogger m, MonadState GraphicsState m)
+  => GraphicsEnv
+  -> m ()
 drawFrame GraphicsEnv{..} = do
+  modify ((`mod` framesInFlight) . (+ 1))
+  frameNumber <- get
+
   let Device{..} = graphicsDevice
       SwapChain{..} = deviceSwapChain
-      SyncObjects{..} = graphicsSyncObjects
+      SyncObjects{..} = graphicsSyncObjects V.! frameNumber
+      commandBuffer = graphicsCommandBuffers V.! frameNumber
 
-  let fences = V.singleton syncInFlightFence
-
-  trace "Waiting for GPU to render frame"
+  trace "Waiting for GPU to render current frame"
   -- Wait for the GPU to finish rendering the last frame.
   -- Ignore TIMEOUT since we're waiting so long anyway.
+  let fences = V.singleton syncInFlightFence
   _ <- VkFence.waitForFences deviceHandle fences True maxBound
   VkFence.resetFences deviceHandle fences
 
-  -- Get the framebuffer for the next image in swapchain.
-  -- Ignore TIMEOUT and NOT_READY since we're not using a fence and
-  -- SUBOPTIMAL_KHR since it's only a warning.
+  -- Get the framebuffer for the next image in the swapchain by getting the
+  -- swapchain image index.
+  -- Ignore TIMEOUT (as above), also NOT_READY since we're not using a fence
+  -- and also SUBOPTIMAL_KHR.
   trace "Acquiring next image from swapchain"
   (_, nextImageIndex) <- VkSwap.acquireNextImageKHR deviceHandle
     swapChainHandle maxBound syncImageAvailableSemaphore Vk.zero
@@ -86,12 +102,12 @@ drawFrame GraphicsEnv{..} = do
 
   trace "Submitting command buffer"
   -- Record and submit the command buffer.
-  recordCommandBuffer graphicsDevice graphicsPipeline graphicsCommandBuffer
+  recordCommandBuffer graphicsDevice graphicsPipeline commandBuffer
     graphicsRenderPass frameBuffer
 
   let submitInfos = fmap Vk.SomeStruct . V.singleton $ Vk.zero {
           VkQueue.commandBuffers = fmap Vk.commandBufferHandle . V.fromList
-            $ [ graphicsCommandBuffer ],
+            $ [ commandBuffer ],
           VkQueue.signalSemaphores = V.singleton syncRenderFinishedSemaphore,
           VkQueue.waitSemaphores = V.singleton syncImageAvailableSemaphore,
           VkQueue.waitDstStageMask =
