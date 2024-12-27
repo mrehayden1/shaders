@@ -11,9 +11,12 @@ extra-source-files:
 - CHANGELOG.md
 
 default-extensions:
+- FlexibleInstances
 - GeneralizedNewtypeDeriving
+- MultiParamTypeClasses
 - OverloadedStrings
 - RecordWildCards
+- UndecidableInstances
 
 # Metadata used when publishing your package
 # synopsis:            Short description of your package
@@ -52,3 +55,4 @@ executables:
     - kan-extensions
     - mtl
     - shaders
+    - time

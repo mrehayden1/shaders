@@ -6,7 +6,10 @@ import Control.Monad
 import Control.Monad.Codensity
 import Control.Monad.Exception
 import Control.Monad.Reader
+import Control.Monad.State
 import Data.Maybe
+import Data.IORef
+import Data.Time.Clock
 import System.Exit
 import Text.Printf
 
@@ -34,6 +37,9 @@ logger l = LoggerT . local (const l) . unLoggerT
 runLoggerT :: LogLevel -> LoggerT m a -> m a
 runLoggerT l = flip runReaderT l . unLoggerT
 
+instance MonadTrans LoggerT where
+  lift = LoggerT . lift
+
 instance MonadIO m => MonadIO (LoggerT m) where
   liftIO = LoggerT . liftIO
 
@@ -51,7 +57,6 @@ instance MonadIO m => MonadLogger (LoggerT m) where
     logLevelStr LogWarn  = "\x1b[33mWARN \x1b[0m"
     logLevelStr LogError = "\x1b[31ERROR \x1b[0m"
     logLevelStr LogNone  = error "Don't use LogNone"
-
 
 main :: IO ()
 main = do
@@ -78,11 +83,23 @@ main = do
     liftIO $ putStrLn "Finished startup."
     liftIO $ putStrLn "Running...\n"
 
-    fix $ \loop -> do
-      lift $ G.drawFrame graphics
-      liftIO pollEvents
-      close <- liftIO $ windowShouldClose window
-      unless close loop
+    timeRef <- liftIO $ newIORef =<< getCurrentTime
+
+    let loop = do
+          G.drawFrame graphics
+          liftIO $ do
+            startTime <- readIORef timeRef
+            endTime <- getCurrentTime
+            writeIORef timeRef endTime
+            let frameTime = realToFrac . diffUTCTime endTime $ startTime
+                  :: Float
+            printf "Frame time: %.5f\n" . (* 1000) $ frameTime
+            printf "FPS: %.5f\n" . (1/) $ frameTime
+          liftIO pollEvents
+          close <- liftIO $ windowShouldClose window
+          unless close loop
+
+    lift $ evalStateT loop 0
 
     liftIO $ putStrLn "Exiting..."
     debug "Awaiting idle."
