@@ -30,7 +30,6 @@ snapshot: lts-20.26
 #   - wai
 packages:
 - .
-- ../shaders
 
 # Dependency packages to be pulled from upstream that are not in the snapshot.
 # These entries can reference officially published versions as well as

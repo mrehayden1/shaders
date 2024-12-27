@@ -26,24 +26,46 @@ source-repository head
 executable bagatelle
   main-is: Main.hs
   other-modules:
+      Graphics.Shaders
+      Graphics.Shaders.Class
+      Graphics.Shaders.CommandBuffer
+      Graphics.Shaders.Device
+      Graphics.Shaders.Device.Physical
+      Graphics.Shaders.Device.SwapChain
+      Graphics.Shaders.Framebuffer
+      Graphics.Shaders.Instance
+      Graphics.Shaders.Pipeline
+      Graphics.Shaders.Sync
+      Graphics.Shaders.Window
       Window
       Paths_bagatelle
   hs-source-dirs:
       src
   default-extensions:
+      DataKinds
+      FlexibleContexts
       FlexibleInstances
       GeneralizedNewtypeDeriving
       MultiParamTypeClasses
       OverloadedStrings
       RecordWildCards
+      ScopedTypeVariables
       UndecidableInstances
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       GLFW-b
     , base >=4.7 && <5
+    , bytestring
+    , data-default
     , exception-transformers
     , kan-extensions
+    , language-spir-v
     , mtl
-    , shaders
+    , shaderc
     , time
+    , transformers
+    , utf8-string
+    , vector
+    , vulkan
+    , witherable
   default-language: Haskell2010

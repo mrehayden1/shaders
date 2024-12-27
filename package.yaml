@@ -11,11 +11,14 @@ extra-source-files:
 - CHANGELOG.md
 
 default-extensions:
+- DataKinds
+- FlexibleContexts
 - FlexibleInstances
 - GeneralizedNewtypeDeriving
 - MultiParamTypeClasses
 - OverloadedStrings
 - RecordWildCards
+- ScopedTypeVariables
 - UndecidableInstances
 
 # Metadata used when publishing your package
@@ -51,8 +54,16 @@ executables:
     - -with-rtsopts=-N
     dependencies:
     - GLFW-b
+    - bytestring
+    - data-default
     - exception-transformers
     - kan-extensions
+    - language-spir-v
     - mtl
-    - shaders
+    - shaderc
     - time
+    - transformers
+    - utf8-string
+    - vector
+    - vulkan
+    - witherable
