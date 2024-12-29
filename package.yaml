@@ -59,6 +59,7 @@ executables:
     - exception-transformers
     - kan-extensions
     - language-spir-v
+    - linear
     - mtl
     - shaderc
     - time

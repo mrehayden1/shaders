@@ -19,9 +19,12 @@ import qualified Data.Vector as V
 import Data.Word
 import qualified Graphics.UI.GLFW as GLFW
 import Text.Printf
-import qualified Vulkan.Core10 as Vk
+import qualified Vulkan.Core10.DeviceInitialization as VkDevice
+import qualified Vulkan.Core10.Enums as Vk
+import qualified Vulkan.Core10.ExtensionDiscovery as VkExtension
 import Vulkan.Core10.FundamentalTypes (Extent2D(Extent2D))
 import qualified Vulkan.Core10.FundamentalTypes as VkExtent2D (Extent2D(..))
+import qualified Vulkan.Core10.Handles as Vk
 import qualified Vulkan.Extensions.VK_KHR_surface as VkSurface
 import qualified Vulkan.Zero as Vk
 import Witherable
@@ -31,7 +34,8 @@ import Graphics.Shaders.Class
 -- A graphics enabled physical device, such as a GPU or CPU.
 data PhysicalDevice = PhysicalDevice {
     physicalDeviceHandle :: Vk.PhysicalDevice,
-    physicalDeviceProperties :: Vk.PhysicalDeviceProperties,
+    physicalDeviceMemoryProperties :: VkDevice.PhysicalDeviceMemoryProperties,
+    physicalDeviceProperties :: VkDevice.PhysicalDeviceProperties,
     physicalDeviceQueueFamilyIndex :: Word32,
     physicalDeviceSwapChainSettings :: SwapChainSettings
   } deriving (Show)
@@ -54,24 +58,24 @@ getSuitableDevices :: (MonadIO m, MonadLogger m)
   -> [ByteString]
   -> m [PhysicalDevice]
 getSuitableDevices vkInstance window surface requiredExtensions = do
-  (_, devices) <- Vk.enumeratePhysicalDevices vkInstance
+  (_, devices) <- VkDevice.enumeratePhysicalDevices vkInstance
   debug . printf "%d devices found." . V.length $ devices
 
   devices' <- flip iwither devices $ \i device -> runMaybeT $ do
-    properties <- Vk.getPhysicalDeviceProperties device
+    properties <- VkDevice.getPhysicalDeviceProperties device
 
-    let deviceName = UTF8.toString . Vk.deviceName $ properties
+    let deviceName = UTF8.toString . VkDevice.deviceName $ properties
     debug . printf "Checking device %d: %s." i $ deviceName
 
     -- Check this device for required extension support and skip it if there
     -- are any that are unsupported.
     debug "Checking device extensions."
     (result, extensions) <-
-      Vk.enumerateDeviceExtensionProperties device Nothing
+      VkExtension.enumerateDeviceExtensionProperties device Nothing
     when (result == Vk.INCOMPLETE) $
       warn "Vulkan API returned incomplete device extension list."
     let unsupportedExtensions = (requiredExtensions \\) . V.toList
-          . fmap Vk.extensionName $ extensions
+          . fmap VkExtension.extensionName $ extensions
     unless (null unsupportedExtensions) $ do
       let errStr = printf "Missing required extensions: %s." . intercalate ", "
             . fmap UTF8.toString $ unsupportedExtensions
@@ -82,16 +86,24 @@ getSuitableDevices vkInstance window surface requiredExtensions = do
     -- Find the first queue family that supports everything we need, skipping
     -- the device if we can't find one.
     debug "Finding compatible device queue family."
-    queueFamilyProperties <- Vk.getPhysicalDeviceQueueFamilyProperties device
+    queueFamilyProperties <-
+      VkDevice.getPhysicalDeviceQueueFamilyProperties device
     queueFamilyIndex <-
       findSuitableQueueFamilyIndex surface device queueFamilyProperties
     debug . printf "Chosen queue family %d." $ queueFamilyIndex
 
-    -- Get the surface capabilities, formats and present modes.
+    -- Get the surface capabilities, formats, present modes and memory
+    -- properties.
     swapChainSupport <- getSwapChainSupport device window surface
+    memoryProperties <- VkDevice.getPhysicalDeviceMemoryProperties device
 
-    let physicalDevice = PhysicalDevice device properties queueFamilyIndex
-                           swapChainSupport
+    let physicalDevice = PhysicalDevice {
+            physicalDeviceHandle = device,
+            physicalDeviceMemoryProperties = memoryProperties,
+            physicalDeviceProperties = properties,
+            physicalDeviceQueueFamilyIndex = queueFamilyIndex,
+            physicalDeviceSwapChainSettings = swapChainSupport
+          }
 
     return physicalDevice
 
@@ -101,7 +113,7 @@ getSuitableDevices vkInstance window surface requiredExtensions = do
 
 scoreSuitability :: PhysicalDevice -> Int
 scoreSuitability device =
-  case Vk.deviceType . physicalDeviceProperties $ device of
+  case VkDevice.deviceType . physicalDeviceProperties $ device of
     Vk.PHYSICAL_DEVICE_TYPE_DISCRETE_GPU -> 10
     Vk.PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU -> 9
     Vk.PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU -> 8
@@ -224,7 +236,7 @@ getSwapChainSupport device window surface = do
 findSuitableQueueFamilyIndex :: forall m. (MonadIO m, MonadLogger m)
   => VkSurface.SurfaceKHR
   -> Vk.PhysicalDevice
-  -> Vector Vk.QueueFamilyProperties
+  -> Vector VkDevice.QueueFamilyProperties
   -> MaybeT m Word32
 findSuitableQueueFamilyIndex surface device queueFamilyProperties = do
   queueFamilies <- filterA (uncurry isSuitable) . zip [0..] . V.toList
@@ -238,12 +250,13 @@ findSuitableQueueFamilyIndex surface device queueFamilyProperties = do
   -- Some queue family properties we can get from the properties object, some
   -- we have to request via extension API calls, hence why we're doing this in
   -- IO.
-  isSuitable :: Word32 -> Vk.QueueFamilyProperties -> MaybeT m Bool
+  isSuitable :: Word32 -> VkDevice.QueueFamilyProperties -> MaybeT m Bool
   isSuitable i queue = do
     canSurface <- liftIO $ supportsSurface i
     return . (&& canSurface) . supportsGraphics $ queue
 
-  supportsGraphics = (/= Vk.zero) . (.&. Vk.QUEUE_GRAPHICS_BIT) . Vk.queueFlags
+  supportsGraphics = (/= Vk.zero) . (.&. Vk.QUEUE_GRAPHICS_BIT)
+                       . VkDevice.queueFlags
 
   supportsSurface i = VkSurface.getPhysicalDeviceSurfaceSupportKHR device i
                         surface

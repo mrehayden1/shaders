@@ -87,14 +87,13 @@ main = do
 
     let loop = do
           G.drawFrame graphics
-          liftIO $ do
-            startTime <- readIORef timeRef
-            endTime <- getCurrentTime
-            writeIORef timeRef endTime
-            let frameTime = realToFrac . diffUTCTime endTime $ startTime
-                  :: Float
-            printf "Frame time: %.5f\n" . (* 1000) $ frameTime
-            printf "FPS: %.5f\n" . (1/) $ frameTime
+          startTime <- liftIO $ readIORef timeRef
+          endTime <- liftIO getCurrentTime
+          liftIO $ writeIORef timeRef endTime
+          let frameTime = realToFrac . diffUTCTime endTime $ startTime
+                :: Float
+          trace . printf "Frame time: %.5f" . (* 1000) $ frameTime
+          trace . printf "FPS: %.5f" . (1/) $ frameTime
           liftIO pollEvents
           close <- liftIO $ windowShouldClose window
           unless close loop

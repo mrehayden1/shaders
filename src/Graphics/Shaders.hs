@@ -15,6 +15,7 @@ import Control.Monad.Trans.Maybe
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import qualified Graphics.UI.GLFW as GLFW
+import Linear hiding (trace)
 import qualified Vulkan.Core10.Fence as VkFence
 import qualified Vulkan.Core10.Handles as Vk
 import qualified Vulkan.Core10.Queue as VkQueue
@@ -22,6 +23,7 @@ import qualified Vulkan.CStruct.Extends as Vk
 import qualified Vulkan.Extensions.VK_KHR_swapchain as VkSwap
 import qualified Vulkan.Zero as Vk
 
+import Graphics.Shaders.Buffer
 import Graphics.Shaders.Class
 import Graphics.Shaders.CommandBuffer
 import Graphics.Shaders.Device
@@ -43,7 +45,8 @@ data GraphicsEnv = GraphicsEnv {
     graphicsPipeline :: Vk.Pipeline,
     graphicsRenderPass :: Vk.RenderPass,
     -- One `SyncObject` per frame in flight
-    graphicsSyncObjects :: Vector SyncObjects
+    graphicsSyncObjects :: Vector SyncObjects,
+    graphicsVertexBuffer :: VertexBuffer (V2 Float, V3 Float)
   }
 
 type GraphicsState = Int
@@ -57,7 +60,8 @@ initialise window = runMaybeT $ do
   (device, queueFamilyIndex) <-
     MaybeT $ createDevice vkInstance window vkSurface
   renderPass <- lift $ createRenderPass device
-  pipeline <- lift . createPipeline device $ renderPass
+  vertexBuffer <- MaybeT $ toVertexBuffer device vertexData
+  pipeline <- lift . createPipeline device renderPass $ vertexBuffer
   framebuffers <- lift . createFramebuffers device $ renderPass
   commandBuffers <- fmap V.fromList . lift . replicateM framesInFlight
     $ createCommandBuffer device queueFamilyIndex
@@ -69,7 +73,8 @@ initialise window = runMaybeT $ do
       graphicsFramebuffers = framebuffers,
       graphicsPipeline = pipeline,
       graphicsRenderPass = renderPass,
-      graphicsSyncObjects = syncObjects
+      graphicsSyncObjects = syncObjects,
+      graphicsVertexBuffer = vertexBuffer
     }
 
 drawFrame :: (MonadIO m, MonadLogger m, MonadState GraphicsState m)
@@ -103,7 +108,7 @@ drawFrame GraphicsEnv{..} = do
   trace "Submitting command buffer"
   -- Record and submit the command buffer.
   recordCommandBuffer graphicsDevice graphicsPipeline commandBuffer
-    graphicsRenderPass frameBuffer
+    graphicsRenderPass frameBuffer graphicsVertexBuffer
 
   let submitInfos = fmap Vk.SomeStruct . V.singleton $ Vk.zero {
           VkQueue.commandBuffers = fmap Vk.commandBufferHandle . V.fromList

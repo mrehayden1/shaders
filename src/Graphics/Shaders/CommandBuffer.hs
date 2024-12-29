@@ -22,6 +22,7 @@ import qualified Vulkan.Core10.FundamentalTypes as VkRect2D (Rect2D(..))
 import qualified Vulkan.Core10.Pipeline as VkPipeline
 import qualified Vulkan.Zero as Vk
 
+import Graphics.Shaders.Buffer
 import Graphics.Shaders.Class
 import Graphics.Shaders.Device
 
@@ -65,8 +66,10 @@ recordCommandBuffer :: MonadIO m
   -> Vk.CommandBuffer
   -> Vk.RenderPass
   -> Vk.Framebuffer
+  -> VertexBuffer a
   -> m ()
-recordCommandBuffer Device{..} pipeline commandBuffer renderPass framebuffer =
+recordCommandBuffer Device{..} pipeline commandBuffer renderPass framebuffer
+    VertexBuffer{..} =
   lowerCodensity $ do
     Codensity $ VkBuffer.useCommandBuffer commandBuffer Vk.zero . (&) ()
     let renderPassBeginInfo = Vk.zero {
@@ -85,6 +88,9 @@ recordCommandBuffer Device{..} pipeline commandBuffer renderPass framebuffer =
     lift $ VkCmd.cmdBindPipeline commandBuffer Vk.PIPELINE_BIND_POINT_GRAPHICS
              pipeline
 
+    VkCmd.cmdBindVertexBuffers commandBuffer 0 (V.singleton vertexBufferHandle)
+      (V.singleton 0)
+
     let SwapChain{..} = deviceSwapChain
 
     let viewport = Vk.zero {
@@ -101,4 +107,4 @@ recordCommandBuffer Device{..} pipeline commandBuffer renderPass framebuffer =
           }
     VkCmd.cmdSetScissor commandBuffer 0 . V.singleton $ scissor
 
-    VkCmd.cmdDraw commandBuffer 3 1 0 0
+    VkCmd.cmdDraw commandBuffer vertexBufferVertices 1 0 0

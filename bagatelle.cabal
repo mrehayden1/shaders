@@ -27,6 +27,7 @@ executable bagatelle
   main-is: Main.hs
   other-modules:
       Graphics.Shaders
+      Graphics.Shaders.Buffer
       Graphics.Shaders.Class
       Graphics.Shaders.CommandBuffer
       Graphics.Shaders.Device
@@ -37,6 +38,7 @@ executable bagatelle
       Graphics.Shaders.Pipeline
       Graphics.Shaders.Sync
       Graphics.Shaders.Window
+      Util.Bits
       Window
       Paths_bagatelle
   hs-source-dirs:
@@ -60,6 +62,7 @@ executable bagatelle
     , exception-transformers
     , kan-extensions
     , language-spir-v
+    , linear
     , mtl
     , shaderc
     , time

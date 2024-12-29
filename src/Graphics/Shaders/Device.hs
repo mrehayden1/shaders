@@ -14,7 +14,10 @@ import Data.ByteString.UTF8 as UTF8
 import qualified Data.Vector as V
 import Data.Word
 import qualified Graphics.UI.GLFW as GLFW
-import qualified Vulkan.Core10 as Vk
+import qualified Vulkan.Core10.Device as VkDevice
+import qualified Vulkan.Core10.DeviceInitialization as VkDevice
+import qualified Vulkan.Core10.Handles as Vk
+import qualified Vulkan.Core10.Queue as VkQueue
 import Vulkan.CStruct.Extends
 import qualified Vulkan.Extensions.VK_KHR_swapchain as VkSwapChain
 import qualified Vulkan.Extensions.VK_KHR_surface as VkSurface
@@ -27,6 +30,7 @@ import Graphics.Shaders.Device.SwapChain
 -- A graphics enabled logical device.
 data Device = Device {
   deviceHandle :: Vk.Device,
+  deviceMemoryProperties :: VkDevice.PhysicalDeviceMemoryProperties,
   deviceQueueHandle :: Vk.Queue,
   deviceSwapChain :: SwapChain
 } deriving (Show)
@@ -50,21 +54,20 @@ createDevice vkInstance window surface = runMaybeT $ do
     fail msg
 
   let PhysicalDevice{..} = head devices
-      deviceHandle = physicalDeviceHandle
-      deviceName = Vk.deviceName physicalDeviceProperties
+      deviceName = VkDevice.deviceName physicalDeviceProperties
   info $ "Chosen physical device: " <> UTF8.toString deviceName
 
   -- Create the logical device and queue.
   debug "Creating logical device."
   let queueCreateInfo = pure . SomeStruct $
-        Vk.DeviceQueueCreateInfo
+        VkDevice.DeviceQueueCreateInfo
           ()
           Vk.zero
           physicalDeviceQueueFamilyIndex
           (V.singleton 1)
 
       deviceCreateInfo =
-        Vk.DeviceCreateInfo
+        VkDevice.DeviceCreateInfo
           ()
           Vk.zero
           queueCreateInfo
@@ -72,20 +75,26 @@ createDevice vkInstance window surface = runMaybeT $ do
           (V.fromList requiredDeviceExtensions)
           Nothing
 
-  let createDevice' = Vk.createDevice deviceHandle deviceCreateInfo Nothing
+  let createDevice' = VkDevice.createDevice physicalDeviceHandle
+                        deviceCreateInfo Nothing
 
   vkDevice <- lift $ Codensity $ bracket createDevice' destroyDevice
-  queue <- Vk.getDeviceQueue vkDevice physicalDeviceQueueFamilyIndex 0
+  queue <- VkQueue.getDeviceQueue vkDevice physicalDeviceQueueFamilyIndex 0
 
   swapChain <- lift $
     createSwapChain surface vkDevice physicalDeviceSwapChainSettings
 
-  let device = Device vkDevice queue swapChain
+  let device = Device {
+          deviceHandle = vkDevice,
+          deviceMemoryProperties = physicalDeviceMemoryProperties,
+          deviceQueueHandle = queue,
+          deviceSwapChain = swapChain
+        }
 
   return (device, physicalDeviceQueueFamilyIndex)
 
 destroyDevice :: (MonadAsyncException m, MonadLogger m) => Vk.Device -> m ()
 destroyDevice device = do
   debug "Destroying logical device."
-  Vk.destroyDevice device Nothing
+  VkDevice.destroyDevice device Nothing
 
