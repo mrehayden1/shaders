@@ -1,6 +1,6 @@
 module Graphics.Shaders.CommandBuffer (
+  createCommandPool,
   createCommandBuffer,
-
   recordCommandBuffer
 ) where
 
@@ -45,11 +45,9 @@ createCommandPool Device{..} queueFamilyIndex = do
 
 createCommandBuffer :: (MonadAsyncException m, MonadLogger m)
   => Device
-  -> Word32
+  -> Vk.CommandPool
   -> Codensity m Vk.CommandBuffer
-createCommandBuffer device@Device{..} queueFamilyIndex = do
-  commandPool <- createCommandPool device queueFamilyIndex
-
+createCommandBuffer Device{..} commandPool = do
   let commandBufferCreateInfo = Vk.zero {
           VkBuffer.commandBufferCount = 1,
           VkBuffer.commandPool = commandPool,
@@ -57,8 +55,12 @@ createCommandBuffer device@Device{..} queueFamilyIndex = do
         }
 
   debug "Allocating command buffer."
-  fmap V.head . lift
-    $ VkBuffer.allocateCommandBuffers deviceHandle commandBufferCreateInfo
+  buffers <- Codensity $ bracket
+    (VkBuffer.allocateCommandBuffers deviceHandle commandBufferCreateInfo)
+    (\buffers -> do
+       debug "Destroying command buffer."
+       VkBuffer.freeCommandBuffers deviceHandle commandPool buffers)
+  return . V.head $ buffers
 
 recordCommandBuffer :: MonadIO m
   => Device

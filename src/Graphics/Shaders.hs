@@ -59,12 +59,13 @@ initialise window = runMaybeT $ do
   vkSurface <- lift $ createWindowSurface window vkInstance
   (device, queueFamilyIndex) <-
     MaybeT $ createDevice vkInstance window vkSurface
+  commandPool <- lift $ createCommandPool device queueFamilyIndex
   renderPass <- lift $ createRenderPass device
-  vertexBuffer <- MaybeT $ toVertexBuffer device vertexData
+  vertexBuffer <- MaybeT $ toVertexBuffer device commandPool vertexData
   pipeline <- lift . createPipeline device renderPass $ vertexBuffer
   framebuffers <- lift . createFramebuffers device $ renderPass
   commandBuffers <- fmap V.fromList . lift . replicateM framesInFlight
-    $ createCommandBuffer device queueFamilyIndex
+    $ createCommandBuffer device commandPool
   syncObjects <- fmap V.fromList . lift . replicateM framesInFlight
     $ createSyncObjects device
   return $ GraphicsEnv {
@@ -112,7 +113,7 @@ drawFrame GraphicsEnv{..} = do
 
   let submitInfos = fmap Vk.SomeStruct . V.singleton $ Vk.zero {
           VkQueue.commandBuffers = fmap Vk.commandBufferHandle . V.fromList
-            $ [ commandBuffer ],
+                                     $ [ commandBuffer ],
           VkQueue.signalSemaphores = V.singleton syncRenderFinishedSemaphore,
           VkQueue.waitSemaphores = V.singleton syncImageAvailableSemaphore,
           VkQueue.waitDstStageMask =
