@@ -112,24 +112,21 @@ drawFrame GraphicsEnv{..} = do
     graphicsRenderPass frameBuffer graphicsVertexBuffer
 
   let submitInfos = fmap Vk.SomeStruct . V.singleton $ Vk.zero {
-          VkQueue.commandBuffers = fmap Vk.commandBufferHandle . V.fromList
-                                     $ [ commandBuffer ],
-          VkQueue.signalSemaphores = V.singleton syncRenderFinishedSemaphore,
-          VkQueue.waitSemaphores = V.singleton syncImageAvailableSemaphore,
-          VkQueue.waitDstStageMask =
-            V.singleton VkQueue.PIPELINE_STAGE_TOP_OF_PIPE_BIT
-        }
-
+    VkQueue.commandBuffers =
+      fmap Vk.commandBufferHandle . V.fromList $ [ commandBuffer ],
+    VkQueue.signalSemaphores = V.singleton syncRenderFinishedSemaphore,
+    VkQueue.waitDstStageMask =
+      V.singleton VkQueue.PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+    VkQueue.waitSemaphores = V.singleton syncImageAvailableSemaphore
+  }
   VkQueue.queueSubmit deviceQueueHandle submitInfos syncInFlightFence
 
   trace "Presenting image"
-
   let presentInfo = Vk.zero {
-          VkSwap.imageIndices = V.singleton nextImageIndex,
-          VkSwap.swapchains = V.singleton swapChainHandle,
-          VkSwap.waitSemaphores = V.singleton syncRenderFinishedSemaphore
-        }
-
+    VkSwap.imageIndices = V.singleton nextImageIndex,
+    VkSwap.swapchains = V.singleton swapChainHandle,
+    VkSwap.waitSemaphores = V.singleton syncRenderFinishedSemaphore
+  }
   _ <- VkSwap.queuePresentKHR deviceQueueHandle presentInfo
 
   return ()

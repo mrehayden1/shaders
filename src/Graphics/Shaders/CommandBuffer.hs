@@ -75,15 +75,15 @@ recordCommandBuffer Device{..} pipeline commandBuffer renderPass framebuffer
   lowerCodensity $ do
     Codensity $ VkBuffer.useCommandBuffer commandBuffer Vk.zero . (&) ()
     let renderPassBeginInfo = Vk.zero {
-            VkCmd.clearValues = V.fromList [
-                VkClear.Color (VkClear.Float32 0 0 0 1)
-              ],
-            VkCmd.renderArea = Vk.zero {
-              VkRect2D.extent = swapChainExtent deviceSwapChain
-            },
-            VkCmd.framebuffer = framebuffer,
-            VkCmd.renderPass = renderPass
-          }
+          VkCmd.clearValues = V.fromList [
+            VkClear.Color (VkClear.Float32 0 0 0 1)
+          ],
+          VkCmd.renderArea = Vk.zero {
+            VkRect2D.extent = swapChainExtent deviceSwapChain
+          },
+          VkCmd.framebuffer = framebuffer,
+          VkCmd.renderPass = renderPass
+        }
     Codensity $
       VkCmd.cmdUseRenderPass commandBuffer renderPassBeginInfo
         VkCmd.SUBPASS_CONTENTS_INLINE . (&) ()
@@ -96,12 +96,10 @@ recordCommandBuffer Device{..} pipeline commandBuffer renderPass framebuffer
     let SwapChain{..} = deviceSwapChain
 
     let viewport = Vk.zero {
-            VkPipeline.height = fromIntegral . VkExtent2D.height
-                                  $ swapChainExtent,
-            VkPipeline.width = fromIntegral . VkExtent2D.width
-                                  $ swapChainExtent,
-            VkPipeline.maxDepth = 1
-          }
+      VkPipeline.height = fromIntegral . VkExtent2D.height $ swapChainExtent,
+      VkPipeline.width = fromIntegral . VkExtent2D.width $ swapChainExtent,
+      VkPipeline.maxDepth = 1
+    }
     Vk.cmdSetViewport commandBuffer 0 . V.singleton $ viewport
 
     let scissor = Vk.zero {
@@ -109,4 +107,4 @@ recordCommandBuffer Device{..} pipeline commandBuffer renderPass framebuffer
           }
     VkCmd.cmdSetScissor commandBuffer 0 . V.singleton $ scissor
 
-    VkCmd.cmdDraw commandBuffer vertexBufferVertices 1 0 0
+    VkCmd.cmdDraw commandBuffer vertexBufferNumVertices 1 0 0

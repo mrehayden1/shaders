@@ -45,7 +45,7 @@ vertexData = [
 
 data VertexBuffer a = VertexBuffer {
   vertexBufferHandle :: Vk.Buffer,
-  vertexBufferVertices :: Word32
+  vertexBufferNumVertices :: Word32
 }
 
 data VertexAttribute = VertexAttribute {
@@ -91,7 +91,7 @@ toVertexBuffer device@Device{..} commandPool vertices = runMaybeT $ do
 
   return $ VertexBuffer {
       vertexBufferHandle = vertexBuffer,
-      vertexBufferVertices = fromIntegral numElems
+      vertexBufferNumVertices = fromIntegral numElems
     }
 
 createBuffer :: (MonadAsyncException m, MonadLogger m)
