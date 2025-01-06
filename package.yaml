@@ -17,6 +17,7 @@ default-extensions:
 - GeneralizedNewtypeDeriving
 - MultiParamTypeClasses
 - OverloadedStrings
+- RankNTypes
 - RecordWildCards
 - ScopedTypeVariables
 - UndecidableInstances

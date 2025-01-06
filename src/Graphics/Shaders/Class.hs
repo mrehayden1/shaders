@@ -1,60 +1,31 @@
 module Graphics.Shaders.Class (
-  MonadLogger(..),
-  Log(..),
-  LogLevel(..),
+  MonadShaders(..),
 
-  trace,
-  debug,
-  info,
-  warn,
-  err,
+  Device(..),
+  SwapChain(..),
 
-  hoistMaybe
+  Frame(..),
+  SyncObjects(..)
 ) where
 
-import Control.Monad.Codensity
-import Control.Monad.State
-import Control.Monad.Trans.Maybe
+import Control.Monad.Trans
+import qualified Vulkan.Core10.Handles as Vk
 
-class MonadLogger m where
-  loggerLevel :: m LogLevel
-  loggerLog :: Log -> m ()
+import Graphics.Shaders.Initialization.Device
+import Graphics.Shaders.Initialization.Sync
+import Graphics.Shaders.Logger.Base
 
-data LogLevel = LogTrace | LogDebug | LogInfo | LogWarn | LogError | LogNone
- deriving (Eq, Ord, Show)
+class Monad m => MonadShaders m where
+  getDevice :: m Device
+  getNextFrame :: m Frame
 
-data Log = Log {
-    logLevel :: LogLevel,
-    logMessage :: String
+instance MonadShaders m => MonadShaders (LoggerT m) where
+  getDevice = lift getDevice
+  {-# INLINE getDevice #-}
+  getNextFrame = lift getNextFrame
+  {-# INLINE getNextFrame #-}
+
+data Frame = Frame {
+    frameCommandBuffer :: Vk.CommandBuffer,
+    frameSyncObjects :: SyncObjects
   }
-
-trace :: MonadLogger m => String -> m ()
-trace = loggerLog . Log LogTrace
-
-debug :: MonadLogger m => String -> m ()
-debug = loggerLog . Log LogDebug
-
-info :: MonadLogger m => String -> m ()
-info = loggerLog . Log LogInfo
-
-warn :: MonadLogger m => String -> m ()
-warn = loggerLog . Log LogWarn
-
-err :: MonadLogger m => String -> m ()
-err = loggerLog . Log LogError
-
-
-instance (Monad m, MonadLogger m) => MonadLogger (Codensity m) where
-  loggerLevel = lift loggerLevel
-  loggerLog = lift . loggerLog
-
-instance (Monad m, MonadLogger m) => MonadLogger (MaybeT m) where
-  loggerLevel = lift loggerLevel
-  loggerLog = lift . loggerLog
-
-instance (Monad m, MonadLogger m) => MonadLogger (StateT s m) where
-  loggerLevel = lift loggerLevel
-  loggerLog = lift . loggerLog
-
-hoistMaybe :: Applicative m => Maybe a -> MaybeT m a
-hoistMaybe = MaybeT . pure

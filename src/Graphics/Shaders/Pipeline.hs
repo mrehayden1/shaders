@@ -1,11 +1,10 @@
 module Graphics.Shaders.Pipeline (
-  createPipeline
+  withPipeline
 ) where
 
 import Control.Monad
-import Control.Monad.Codensity
+import Control.Monad.Trans
 import Control.Monad.Exception
-import Control.Monad.IO.Class
 import Data.Bits
 import Data.ByteString (ByteString)
 import Data.Default
@@ -27,22 +26,20 @@ import qualified Vulkan.Core10.Pipeline as VkPipeline hiding (
 import Vulkan.CStruct.Extends (SomeStruct(..))
 import qualified Vulkan.Zero as Vk
 
+import Graphics.Shaders.Base
 import Graphics.Shaders.Buffer
-import Graphics.Shaders.Class
-import Graphics.Shaders.Device
+import Graphics.Shaders.Logger.Class
 
-createPipeline :: (MonadAsyncException m, MonadLogger m)
-  => Device
-  -> Vk.RenderPass
-  -> VertexBuffer (V2 Float, V3 Float)
-  -> Codensity m VkPipeline.Pipeline
-createPipeline Device{..} renderPass vertexBuffer = do
-
+withPipeline :: (MonadAsyncException m, MonadLogger m)
+  => VertexBuffer (V2 Float, V3 Float)
+  -> ShadersT m VkPipeline.Pipeline
+withPipeline vertexBuffer = do
+  Device{..} <- getDevice
   vertexShaderModule <- createVertexShader deviceHandle
   fragmentShaderModule <- createFragmentShader deviceHandle
 
   debug "Creating pipeline layout."
-  layout <- Codensity $ bracket
+  layout <- fromCps $ bracket
     (Vk.createPipelineLayout deviceHandle Vk.zero Nothing)
     (\l -> do
       debug "Destroying pipeline layout."
@@ -76,7 +73,7 @@ createPipeline Device{..} renderPass vertexBuffer = do
             VkPipeline.lineWidth = 1,
             VkPipeline.polygonMode = VkPipeline.POLYGON_MODE_FILL
           },
-          VkPipeline.renderPass = renderPass,
+          VkPipeline.renderPass = deviceRenderPass,
           VkPipeline.vertexInputState = Just . SomeStruct $ Vk.zero {
               VkPipeline.vertexAttributeDescriptions =
                 bufferVertexAttributes vertexBuffer,
@@ -103,7 +100,7 @@ createPipeline Device{..} renderPass vertexBuffer = do
         }
 
   debug "Creating pipeline."
-  Codensity $ bracket
+  fromCps $ bracket
     -- We don't care about the result type since we're not preventing
     -- compilation.
     (do (result, pipelines) <-
@@ -120,7 +117,7 @@ createPipeline Device{..} renderPass vertexBuffer = do
 
 createVertexShader :: (MonadAsyncException m, MonadLogger m)
   => Vk.Device
-  -> Codensity m Vk.ShaderModule
+  -> ShadersT m Vk.ShaderModule
 createVertexShader device = do
   debug "Compiling vertex shader source."
   (S compiledCode :: S 'VertexShader) <-
@@ -129,7 +126,7 @@ createVertexShader device = do
           Vk.code = compiledCode
         }
   debug "Creating vertex shader module."
-  Codensity $ bracket
+  fromCps $ bracket
     (Vk.createShaderModule device createInfo Nothing)
     (\s -> do
       debug "Destroying vertex shader module."
@@ -138,7 +135,7 @@ createVertexShader device = do
  where
   code :: ByteString
   code = "\
-    \ #version 450\n\n\
+    \ #version 460\n\n\
     \ layout(location = 0) in vec2 inPosition;\n\
     \ layout(location = 1) in vec3 inColor;\n\n\
     \ layout(location = 0) out vec3 fragColor;\n\n\
@@ -149,7 +146,7 @@ createVertexShader device = do
 
 createFragmentShader :: (MonadAsyncException m, MonadLogger m)
   => Vk.Device
-  -> Codensity m Vk.ShaderModule
+  -> ShadersT m Vk.ShaderModule
 createFragmentShader device = do
   debug "Compiling fragment shader source."
   (S compiledCode :: S 'FragmentShader) <-
@@ -158,7 +155,7 @@ createFragmentShader device = do
           Vk.code = compiledCode
         }
   debug "Creating fragment shader module."
-  Codensity $ bracket
+  fromCps $ bracket
     (Vk.createShaderModule device createInfo Nothing)
     (\s -> do
       debug "Destroying fragment shader module."
@@ -167,7 +164,7 @@ createFragmentShader device = do
  where
   code :: ByteString
   code  = "\
-    \ #version 450\n\n\
+    \ #version 460\n\n\
     \ layout(location = 0) in vec3 fragColor;\n\n\
     \ layout(location = 0) out vec4 outColor;\n\n\
     \ void main() {\n\

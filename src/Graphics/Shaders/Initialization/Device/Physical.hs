@@ -1,4 +1,4 @@
-module Graphics.Shaders.Device.Physical (
+module Graphics.Shaders.Initialization.Device.Physical (
   PhysicalDevice(..),
   SwapChainSettings(..),
 
@@ -29,7 +29,8 @@ import qualified Vulkan.Extensions.VK_KHR_surface as VkSurface
 import qualified Vulkan.Zero as Vk
 import Witherable
 
-import Graphics.Shaders.Class
+import Graphics.Shaders.Logger.Class
+import Util.Maybe
 
 -- A graphics enabled physical device, such as a GPU or CPU.
 data PhysicalDevice = PhysicalDevice {

@@ -1,5 +1,5 @@
-module Graphics.Shaders.Instance (
-  createInstance
+module Graphics.Shaders.Initialization.Instance (
+  withInstance
 ) where
 
 import Control.Monad.Codensity
@@ -12,13 +12,12 @@ import qualified Graphics.UI.GLFW as GLFW
 import qualified Vulkan as Vk
 import qualified Vulkan.Zero as Vk
 
-import Graphics.Shaders.Class
+import Graphics.Shaders.Logger.Class
 
-createInstance :: (MonadAsyncException m, MonadLogger m)
+withInstance :: (MonadAsyncException m, MonadLogger m)
   => Codensity m Vk.Instance
-createInstance = do
+withInstance = do
   Codensity $ bracket createInstance' destroyInstance
-
  where
   createInstance' = do
     let appInfo = Vk.ApplicationInfo Nothing 0 Nothing 0 Vk.API_VERSION_1_3

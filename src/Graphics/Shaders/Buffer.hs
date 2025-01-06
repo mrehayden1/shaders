@@ -4,14 +4,13 @@ module Graphics.Shaders.Buffer (
   VertexBuffer(..),
   VertexAttribute(..),
   VertexFormat(..),
-  toVertexBuffer
+
+  withVerticesAsBuffer
 ) where
 
 import Control.Monad
-import Control.Monad.Codensity
 import Control.Monad.Exception
 import Control.Monad.Trans
-import Control.Monad.Trans.Maybe
 import qualified Data.Vector as V
 import Data.Word
 import Foreign.Marshal.Array
@@ -32,8 +31,9 @@ import qualified Vulkan.Core10.Queue as VkQueue
 import Vulkan.CStruct.Extends
 import qualified Vulkan.Zero as Vk
 
-import Graphics.Shaders.Class
-import Graphics.Shaders.Device
+import Graphics.Shaders.Base
+import Graphics.Shaders.Exception
+import Graphics.Shaders.Logger.Class
 import Util.Bits
 
 vertexData :: [(V2 Float, V3 Float)]
@@ -53,16 +53,23 @@ data VertexAttribute = VertexAttribute {
   attributeOffset :: Word32 -- in bytes
 } deriving (Show)
 
-toVertexBuffer :: forall a m. (Storable (Vertex a), MonadAsyncException m,
-    MonadLogger m)
-  => Device
-  -> Vk.CommandPool
-  -> [a]
-  -> Codensity m (Maybe (VertexBuffer a))
-toVertexBuffer device@Device{..} commandPool vertices = runMaybeT $ do
+withVerticesAsBuffer :: forall a m. (Storable (Vertex a),
+    MonadAsyncException m, MonadLogger m)
+  => [a]
+  -> ShadersT m (VertexBuffer a)
+withVerticesAsBuffer vertices = do
+  Device{..} <- getDevice
   let stride = fromIntegral . sizeOf $ (undefined :: Vertex a)
       numElems = fromIntegral . length $ vertices
       bufferSize = stride * numElems
+
+  -- Create a vertex buffer
+  debug "Creating vertex buffer."
+  let vertexBufferUsageFlags = VkBuffer.BUFFER_USAGE_TRANSFER_DST_BIT
+        .|. VkBuffer.BUFFER_USAGE_VERTEX_BUFFER_BIT
+      vertexBufferPropertyFlags = Vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+  (vertexBuffer, _) <- withBuffer bufferSize vertexBufferUsageFlags
+    vertexBufferPropertyFlags
 
   -- Create a staging buffer
   -- TODO Clean up the staging buffer after it's used.
@@ -70,8 +77,8 @@ toVertexBuffer device@Device{..} commandPool vertices = runMaybeT $ do
   let stagingBufferUsageFlags = VkBuffer.BUFFER_USAGE_TRANSFER_SRC_BIT
       stagingMemoryPropertyFlags = Vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT
         .|. Vk.MEMORY_PROPERTY_HOST_COHERENT_BIT
-  (stagingBuffer, stagingBufferMemory) <- MaybeT $ createBuffer device
-    bufferSize stagingBufferUsageFlags stagingMemoryPropertyFlags
+  (stagingBuffer, stagingBufferMemory) <- withBuffer bufferSize
+    stagingBufferUsageFlags stagingMemoryPropertyFlags
 
   -- Fill the buffer
   ptr <-
@@ -79,78 +86,69 @@ toVertexBuffer device@Device{..} commandPool vertices = runMaybeT $ do
   liftIO $ pokeArray (castPtr ptr) . fmap Vertex $ vertices
   VkMemory.unmapMemory deviceHandle stagingBufferMemory
 
-  -- Create a vertex buffer
-  debug "Creating vertex buffer."
-  let vertexBufferUsageFlags = VkBuffer.BUFFER_USAGE_TRANSFER_DST_BIT
-        .|. VkBuffer.BUFFER_USAGE_VERTEX_BUFFER_BIT
-      vertexBufferPropertyFlags = Vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT
-  (vertexBuffer, _) <- MaybeT $ createBuffer device bufferSize
-    vertexBufferUsageFlags vertexBufferPropertyFlags
-
-  copyBuffer device commandPool stagingBuffer vertexBuffer bufferSize
+  copyBuffer deviceCommandPool stagingBuffer vertexBuffer bufferSize
 
   return $ VertexBuffer {
       vertexBufferHandle = vertexBuffer,
       vertexBufferNumVertices = fromIntegral numElems
     }
 
-createBuffer :: (MonadAsyncException m, MonadLogger m)
-  => Device
-  -> Vk.DeviceSize
+withBuffer :: (MonadAsyncException m, MonadLogger m)
+  => Vk.DeviceSize
   -> Vk.BufferUsageFlagBits
   -> Vk.MemoryPropertyFlags
-  -> Codensity m (Maybe (Vk.Buffer, Vk.DeviceMemory))
-createBuffer Device{..} bufferSize bufferUsageFlags memoryPropertyFlags =
-  runMaybeT $ do
-    let bufferInfo = Vk.zero {
-            VkBuffer.sharingMode = VkBuffer.SHARING_MODE_EXCLUSIVE,
-            VkBuffer.size = bufferSize,
-            VkBuffer.usage = bufferUsageFlags
-          }
-    buffer <- lift $ Codensity
-      $ VkBuffer.withBuffer deviceHandle bufferInfo Nothing bracket
+  -> ShadersT m (Vk.Buffer, Vk.DeviceMemory)
+withBuffer bufferSize bufferUsageFlags memoryPropertyFlags = do
+  Device{..} <- getDevice
+  let bufferInfo = Vk.zero {
+          VkBuffer.sharingMode = VkBuffer.SHARING_MODE_EXCLUSIVE,
+          VkBuffer.size = bufferSize,
+          VkBuffer.usage = bufferUsageFlags
+        }
+  buffer <- fromCps
+    $ VkBuffer.withBuffer deviceHandle bufferInfo Nothing bracket
 
-    -- Find compatible memory
-    memoryRequirements <-
-      VkManagement.getBufferMemoryRequirements deviceHandle buffer
+  -- Find compatible memory
+  memoryRequirements <-
+    VkManagement.getBufferMemoryRequirements deviceHandle buffer
 
-    let getMemoryTypeIndexIfCompatible i t =
-          if VkDevice.propertyFlags t .&&. memoryPropertyFlags
-               && testBit (VkManagement.memoryTypeBits memoryRequirements) i
-            then Just i
-            else Nothing
+  let getMemoryTypeIndexIfCompatible i t =
+        if VkDevice.propertyFlags t .&&. memoryPropertyFlags
+             && testBit (VkManagement.memoryTypeBits memoryRequirements) i
+          then Just i
+          else Nothing
 
-    let memoryTypeIndices = V.imapMaybe getMemoryTypeIndexIfCompatible
-          . VkDevice.memoryTypes
-          $ deviceMemoryProperties
+  let memoryTypeIndices = V.imapMaybe getMemoryTypeIndexIfCompatible
+        . VkDevice.memoryTypes
+        $ deviceMemoryProperties
 
-    when (V.null memoryTypeIndices) $ do
-      let msg = "No suitable memory type found."
-      err msg
-      fail msg
+  when (V.null memoryTypeIndices) $ do
+    let msg = "No suitable memory type found."
+    err msg
+    lift . throw . ShadersMemoryException $ msg
 
-    let memoryTypeIndex = V.head memoryTypeIndices
+  let memoryTypeIndex = V.head memoryTypeIndices
 
-    -- Allocate and bind buffer memory
-    let allocInfo = Vk.zero {
-            VkMemory.allocationSize = VkManagement.size memoryRequirements,
-            VkMemory.memoryTypeIndex = fromIntegral memoryTypeIndex
-          }
-    memory <- lift $ Codensity
-      $ VkMemory.withMemory deviceHandle allocInfo Nothing bracket
+  -- Allocate and bind buffer memory
+  let allocInfo = Vk.zero {
+          VkMemory.allocationSize = VkManagement.size memoryRequirements,
+          VkMemory.memoryTypeIndex = fromIntegral memoryTypeIndex
+        }
+  memory <- fromCps
+    $ VkMemory.withMemory deviceHandle allocInfo Nothing bracket
 
-    VkManagement.bindBufferMemory deviceHandle buffer memory 0
+  VkManagement.bindBufferMemory deviceHandle buffer memory 0
 
-    return (buffer, memory)
+  return (buffer, memory)
 
-copyBuffer :: (MonadIO m, MonadLogger m)
-  => Device
-  -> Vk.CommandPool
+copyBuffer :: (MonadIO m, MonadLogger m, MonadShaders m)
+  => Vk.CommandPool
   -> Vk.Buffer
   -> Vk.Buffer
   -> Vk.DeviceSize
   -> m ()
-copyBuffer Device{..} commandPool src dest size = do
+copyBuffer commandPool src dest size = do
+  Device{..} <- getDevice
   let commandBufferCreateInfo = Vk.zero {
           VkCmdBuffer.commandBufferCount = 1,
           VkCmdBuffer.commandPool = commandPool,

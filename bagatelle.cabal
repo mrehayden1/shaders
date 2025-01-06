@@ -27,18 +27,23 @@ executable bagatelle
   main-is: Main.hs
   other-modules:
       Graphics.Shaders
+      Graphics.Shaders.Base
       Graphics.Shaders.Buffer
       Graphics.Shaders.Class
       Graphics.Shaders.CommandBuffer
-      Graphics.Shaders.Device
-      Graphics.Shaders.Device.Physical
-      Graphics.Shaders.Device.SwapChain
-      Graphics.Shaders.Framebuffer
-      Graphics.Shaders.Instance
+      Graphics.Shaders.Draw
+      Graphics.Shaders.Exception
+      Graphics.Shaders.Initialization.Device
+      Graphics.Shaders.Initialization.Device.Physical
+      Graphics.Shaders.Initialization.Device.SwapChain
+      Graphics.Shaders.Initialization.Instance
+      Graphics.Shaders.Initialization.Sync
+      Graphics.Shaders.Initialization.Window
+      Graphics.Shaders.Logger.Base
+      Graphics.Shaders.Logger.Class
       Graphics.Shaders.Pipeline
-      Graphics.Shaders.Sync
-      Graphics.Shaders.Window
       Util.Bits
+      Util.Maybe
       Window
       Paths_bagatelle
   hs-source-dirs:
@@ -50,6 +55,7 @@ executable bagatelle
       GeneralizedNewtypeDeriving
       MultiParamTypeClasses
       OverloadedStrings
+      RankNTypes
       RecordWildCards
       ScopedTypeVariables
       UndecidableInstances
