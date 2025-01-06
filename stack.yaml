@@ -47,10 +47,14 @@ extra-deps:
 - typelevel-tools-yj-0.1.0.7
 - vulkan-3.26.2
 
-# Override default flag values for project packages and extra-deps
+# Override default flag values for project packages and dependencies
 flags:
   bindings-GLFW:
     system-glfw: true
+
+# Override default GHC options for project packages and dependencies
+ghc-options:
+  "$everything": -split-sections # reduce final executable size
 
 # Extra package databases containing global packages
 # extra-package-dbs: []
