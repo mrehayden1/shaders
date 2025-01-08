@@ -2,8 +2,7 @@ module Graphics.Shaders.Buffer (
   vertexData,
 
   VertexBuffer(..),
-  VertexAttribute(..),
-  VertexFormat(..),
+  Bufferable,
 
   withVerticesAsBuffer
 ) where
@@ -31,7 +30,7 @@ import qualified Vulkan.Core10.Queue as VkQueue
 import Vulkan.CStruct.Extends
 import qualified Vulkan.Zero as Vk
 
-import Graphics.Shaders.Base
+import Graphics.Shaders
 import Graphics.Shaders.Exception
 import Graphics.Shaders.Logger.Class
 import Util.Bits
@@ -48,17 +47,12 @@ data VertexBuffer a = VertexBuffer {
   vertexBufferNumVertices :: Word32
 }
 
-data VertexAttribute = VertexAttribute {
-  attributeFormat :: Vk.Format,
-  attributeOffset :: Word32 -- in bytes
-} deriving (Show)
-
 withVerticesAsBuffer :: forall a m. (Storable (Vertex a),
     MonadAsyncException m, MonadLogger m)
   => [a]
   -> ShadersT m (VertexBuffer a)
 withVerticesAsBuffer vertices = do
-  Device{..} <- getDevice
+  deviceHandle <- getDeviceHandle
   let stride = fromIntegral . sizeOf $ (undefined :: Vertex a)
       numElems = fromIntegral . length $ vertices
       bufferSize = stride * numElems
@@ -86,7 +80,8 @@ withVerticesAsBuffer vertices = do
   liftIO $ pokeArray (castPtr ptr) . fmap Vertex $ vertices
   VkMemory.unmapMemory deviceHandle stagingBufferMemory
 
-  copyBuffer deviceCommandPool stagingBuffer vertexBuffer bufferSize
+  commandPool <- getCommandPool
+  copyBuffer commandPool stagingBuffer vertexBuffer bufferSize
 
   return $ VertexBuffer {
       vertexBufferHandle = vertexBuffer,
@@ -99,7 +94,7 @@ withBuffer :: (MonadAsyncException m, MonadLogger m)
   -> Vk.MemoryPropertyFlags
   -> ShadersT m (Vk.Buffer, Vk.DeviceMemory)
 withBuffer bufferSize bufferUsageFlags memoryPropertyFlags = do
-  Device{..} <- getDevice
+  deviceHandle <- getDeviceHandle
   let bufferInfo = Vk.zero {
           VkBuffer.sharingMode = VkBuffer.SHARING_MODE_EXCLUSIVE,
           VkBuffer.size = bufferSize,
@@ -118,9 +113,10 @@ withBuffer bufferSize bufferUsageFlags memoryPropertyFlags = do
           then Just i
           else Nothing
 
+  memoryProperties <- getDeviceMemoryProperties
   let memoryTypeIndices = V.imapMaybe getMemoryTypeIndexIfCompatible
         . VkDevice.memoryTypes
-        $ deviceMemoryProperties
+        $ memoryProperties
 
   when (V.null memoryTypeIndices) $ do
     let msg = "No suitable memory type found."
@@ -141,14 +137,15 @@ withBuffer bufferSize bufferUsageFlags memoryPropertyFlags = do
 
   return (buffer, memory)
 
-copyBuffer :: (MonadIO m, MonadLogger m, MonadShaders m)
+copyBuffer :: (MonadIO m, MonadLogger m)
   => Vk.CommandPool
   -> Vk.Buffer
   -> Vk.Buffer
   -> Vk.DeviceSize
-  -> m ()
+  -> ShadersT m ()
 copyBuffer commandPool src dest size = do
-  Device{..} <- getDevice
+  deviceHandle <- getDeviceHandle
+  queueHandle <- getQueueHandle
   let commandBufferCreateInfo = Vk.zero {
           VkCmdBuffer.commandBufferCount = 1,
           VkCmdBuffer.commandPool = commandPool,
@@ -175,63 +172,28 @@ copyBuffer commandPool src dest size = do
                                      $ cmdBuffer
         }
 
-  VkQueue.queueSubmit deviceQueueHandle (V.singleton submitInfo) Vk.zero
-  VkQueue.queueWaitIdle deviceQueueHandle
+  VkQueue.queueSubmit queueHandle (V.singleton submitInfo) Vk.zero
+  VkQueue.queueWaitIdle queueHandle
 
   debug "Destroying temporary command buffer."
   VkCmdBuffer.freeCommandBuffers deviceHandle commandPool cmdBuffers
 
--- Represents 4 byte aligned types. Used to create binding and attribute
--- descriptions.
-class VertexFormat a where
-  vertexAttributes :: a -> [VertexAttribute]
-  vertexStride :: a -> Word32 -- in bytes
+-- Represents tightly packed 4 byte aligned types.
+class Bufferable a
 
-instance VertexFormat Float where
-  vertexAttributes _ = [VertexAttribute Vk.FORMAT_R32_SFLOAT 0]
-  vertexStride _ = fromIntegral $ sizeOf (undefined :: Float)
-
-instance VertexFormat (V2 Float) where
-  vertexAttributes _ = [VertexAttribute Vk.FORMAT_R32G32_SFLOAT 0]
-  vertexStride _ = fromIntegral $ sizeOf (undefined :: V2 Float)
-
-instance VertexFormat (V3 Float) where
-  vertexAttributes _ = [VertexAttribute Vk.FORMAT_R32G32B32_SFLOAT 0]
-  vertexStride _ = fromIntegral $ sizeOf (undefined :: V3 Float)
-
-instance VertexFormat (V4 Float) where
-  vertexAttributes _ = [VertexAttribute Vk.FORMAT_R32G32B32A32_SFLOAT 0]
-  vertexStride _ = fromIntegral $ sizeOf (undefined :: V4 Float)
-
-instance (VertexFormat a, VertexFormat b) => VertexFormat (a, b) where
-  vertexAttributes _ =
-    let attrs  = vertexAttributes (undefined :: a)
-        stride = vertexStride (undefined :: a)
-        attrs' = vertexAttributes (undefined :: b)
-    in attrs <> fmap (\attr -> attr { attributeOffset = attributeOffset attr + stride }) attrs'
-
-  vertexStride _ = vertexStride (undefined :: a)
-                    + vertexStride (undefined :: b)
-
-instance (VertexFormat a, VertexFormat b, VertexFormat c)
-    => VertexFormat (a, b, c) where
-  vertexAttributes _ =
-    let attrs  = vertexAttributes (undefined :: (a, b))
-        stride = vertexStride (undefined :: (a, b))
-        attrs' = vertexAttributes (undefined :: c)
-    in attrs <>
-         fmap (\attr -> attr { attributeOffset = attributeOffset attr + stride })
-              attrs'
-
-  vertexStride _ = vertexStride (undefined :: (a, b))
-                     + vertexStride (undefined :: c)
+instance Bufferable Float
+instance Bufferable (V2 Float)
+instance Bufferable (V3 Float)
+instance Bufferable (V4 Float)
+instance (Bufferable a, Bufferable b) => Bufferable (a, b)
+instance (Bufferable a, Bufferable b, Bufferable c) => Bufferable (a, b, c)
 
 -- Type wrapper for marshalling vertices into buffers.
 newtype Vertex a = Vertex {
   unVertex :: a
 } deriving (Show)
 
-instance (Storable a, Storable b, VertexFormat a, VertexFormat b)
+instance (Storable a, Storable b, Bufferable a, Bufferable b)
     => Storable (Vertex (a, b)) where
   alignment _ = 4
   peek ptr = do
@@ -242,3 +204,19 @@ instance (Storable a, Storable b, VertexFormat a, VertexFormat b)
     poke (castPtr ptr) a
     pokeByteOff ptr (sizeOf a) b
   sizeOf _ = sizeOf (undefined :: a) + sizeOf (undefined :: b)
+
+instance (Storable a, Storable b, Storable c, Bufferable a, Bufferable b, Bufferable c)
+    => Storable (Vertex (a, b, c)) where
+  alignment _ = 4
+  peek ptr = do
+    a <- peek (castPtr ptr)
+    b <- peekByteOff ptr (sizeOf a)
+    c <- peekByteOff ptr (sizeOf b)
+    return $ Vertex (a, b, c)
+  poke ptr (Vertex (a, b, c)) = do
+    poke (castPtr ptr) a
+    pokeByteOff ptr (sizeOf a) b
+    pokeByteOff ptr (sizeOf b) c
+  sizeOf _ = sizeOf (undefined :: a)
+               + sizeOf (undefined :: b)
+               + sizeOf (undefined :: c)

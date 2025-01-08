@@ -27,10 +27,7 @@ executable bagatelle
   main-is: Main.hs
   other-modules:
       Graphics.Shaders
-      Graphics.Shaders.Base
       Graphics.Shaders.Buffer
-      Graphics.Shaders.Class
-      Graphics.Shaders.CommandBuffer
       Graphics.Shaders.Draw
       Graphics.Shaders.Exception
       Graphics.Shaders.Initialization.Device
@@ -42,6 +39,7 @@ executable bagatelle
       Graphics.Shaders.Logger.Base
       Graphics.Shaders.Logger.Class
       Graphics.Shaders.Pipeline
+      Graphics.Shaders.Shader
       Util.Bits
       Util.Maybe
       Window

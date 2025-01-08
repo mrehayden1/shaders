@@ -10,79 +10,59 @@ import Vulkan.Core10.CommandBuffer as VkCmd hiding (
   CommandBufferInheritanceInfo(..))
 import Vulkan.Core10.CommandBufferBuilding as VkCmd
 import Vulkan.Core10.Enums as VkEnum
-import Vulkan.Core10.Fence as VkFence
 import Vulkan.Core10.FundamentalTypes as VkExtent2D (Extent2D(..))
 import Vulkan.Core10.FundamentalTypes as VkRect2D (Rect2D(..))
 import qualified Vulkan.Core10.Handles as Vk
-import Vulkan.Core10.Pipeline as VkPipeline
+import qualified Vulkan.Core10.Pipeline as VkPipeline
 import Vulkan.Core10.Queue as VkQueue
 import Vulkan.CStruct.Extends as Vk
-import Vulkan.Extensions.VK_KHR_swapchain as VkSwap
 import Vulkan.Zero as Vk
 
-import Graphics.Shaders.Base
+import Graphics.Shaders
 import Graphics.Shaders.Buffer
 import Graphics.Shaders.Logger.Class
+import Graphics.Shaders.Pipeline
 
 drawFrame :: (MonadIO m, MonadLogger m)
-  => Vk.Pipeline
+  => Pipeline a
   -> VertexBuffer a
   -> ShadersT m ()
-drawFrame pipeline vertexBuffer = do
-  Frame{..} <- getNextFrame
-
-  Device{..} <- getDevice
-  let SwapChain{..} = deviceSwapChain
-      SyncObjects{..} = frameSyncObjects
+drawFrame Pipeline{..} vertexBuffer = do
+  Frame{..} <- getCurrentFrame
+  queueHandle <- getQueueHandle
+  let SyncObjects{..} = frameSyncObjects
       commandBuffer = frameCommandBuffer
-
-  trace "Waiting for GPU to render current frame"
-  -- Wait for the GPU to finish rendering the last frame.
-  -- Ignore TIMEOUT since we're waiting so long anyway.
-  let fences = V.singleton syncInFlightFence
-  _ <- VkFence.waitForFences deviceHandle fences True maxBound
-  VkFence.resetFences deviceHandle fences
 
   -- Get the framebuffer for the next image in the swapchain by getting the
   -- swapchain image index.
   -- Ignore TIMEOUT and NOT_READY since we're not using a fence or semaphore
   -- and ignore SUBOPTIMAL_KHR.
   trace "Acquiring next image from swapchain"
-  (_, nextImageIndex) <- VkSwap.acquireNextImageKHR deviceHandle
-    swapChainHandle maxBound Vk.zero Vk.zero
-  let frameBuffer = swapChainFramebuffers V.! fromIntegral nextImageIndex
+  (_, framebuffer) <- getCurrentSwapChainImage
 
   trace "Submitting command buffer"
   -- Record and submit the command buffer.
-  recordCommandBuffer commandBuffer frameBuffer vertexBuffer
+  recordCommandBuffer commandBuffer framebuffer vertexBuffer
 
   let submitInfos = fmap Vk.SomeStruct . V.singleton $ Vk.zero {
     VkQueue.commandBuffers =
       fmap Vk.commandBufferHandle . V.fromList $ [ commandBuffer ],
     VkQueue.signalSemaphores = V.singleton syncRenderFinishedSemaphore
   }
-  VkQueue.queueSubmit deviceQueueHandle submitInfos syncInFlightFence
-
-  trace "Presenting image"
-  let presentInfo = Vk.zero {
-    VkSwap.imageIndices = V.singleton nextImageIndex,
-    VkSwap.swapchains = V.singleton swapChainHandle,
-    VkSwap.waitSemaphores = V.singleton syncRenderFinishedSemaphore
-  }
-  _ <- VkSwap.queuePresentKHR deviceQueueHandle presentInfo
+  VkQueue.queueSubmit queueHandle submitInfos syncInFlightFence
 
   return ()
  where
-  recordCommandBuffer :: (MonadIO m, MonadShaders m)
+  recordCommandBuffer :: MonadIO m
     => Vk.CommandBuffer
     -> Vk.Framebuffer
     -> VertexBuffer a
-    -> m ()
-  recordCommandBuffer commandBuffer framebuffer
-      VertexBuffer{..} =
+    -> ShadersT m ()
+  recordCommandBuffer commandBuffer framebuffer VertexBuffer{..} =
     -- Use Codensity to bracket command buffer recording and render pass.
     flip runCodensity return $ do
-      Device{..} <- lift getDevice
+      extent <- lift getExtent
+      renderPass <- lift getRenderPass
       Codensity $ VkCmd.useCommandBuffer commandBuffer Vk.zero . (&) ()
       let renderPassBeginInfo = Vk.zero {
         VkCmd.clearValues = V.fromList [
@@ -90,30 +70,29 @@ drawFrame pipeline vertexBuffer = do
         ],
         VkCmd.framebuffer = framebuffer,
         VkCmd.renderArea = Vk.zero {
-          VkRect2D.extent = swapChainExtent deviceSwapChain
+          VkRect2D.extent = extent
         },
-        VkCmd.renderPass = deviceRenderPass
+        VkCmd.renderPass = renderPass
       }
       Codensity $
         VkCmd.cmdUseRenderPass commandBuffer renderPassBeginInfo
           VkCmd.SUBPASS_CONTENTS_INLINE . (&) ()
       lift $ VkCmd.cmdBindPipeline commandBuffer
-               VkEnum.PIPELINE_BIND_POINT_GRAPHICS pipeline
-      VkCmd.cmdBindVertexBuffers commandBuffer 0
-        (V.singleton vertexBufferHandle) (V.singleton 0)
-
-      let SwapChain{..} = deviceSwapChain
+               VkEnum.PIPELINE_BIND_POINT_GRAPHICS pipelineHandle
 
       let viewport = Vk.zero {
-        VkPipeline.height = fromIntegral . VkExtent2D.height $ swapChainExtent,
-        VkPipeline.width = fromIntegral . VkExtent2D.width $ swapChainExtent,
+        VkPipeline.height = fromIntegral . VkExtent2D.height $ extent,
+        VkPipeline.width = fromIntegral . VkExtent2D.width $ extent,
         VkPipeline.maxDepth = 1
       }
       VkCmd.cmdSetViewport commandBuffer 0 . V.singleton $ viewport
 
       let scissor = Vk.zero {
-        VkRect2D.extent = swapChainExtent
+        VkRect2D.extent = extent
       }
       VkCmd.cmdSetScissor commandBuffer 0 . V.singleton $ scissor
+
+      VkCmd.cmdBindVertexBuffers commandBuffer 0
+        (V.singleton vertexBufferHandle) (V.singleton 0)
 
       VkCmd.cmdDraw commandBuffer vertexBufferNumVertices 1 0 0

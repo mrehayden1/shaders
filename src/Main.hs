@@ -44,14 +44,16 @@ main = do
       timeRef <- liftIO $ newIORef =<< getCurrentTime
 
       vertexBuffer <- withVerticesAsBuffer vertexData
-      pipeline <- withPipeline vertexBuffer
+      pipeline <- withPipeline
 
       let loop = do
             drawFrame pipeline vertexBuffer
+            swap
             startTime <- liftIO $ readIORef timeRef
             endTime <- liftIO getCurrentTime
             liftIO $ writeIORef timeRef endTime
-            let frameTime = realToFrac . diffUTCTime endTime $ startTime :: Float
+            let frameTime = realToFrac . diffUTCTime endTime
+                              $ startTime :: Float
             trace . printf "Frame time: %.5f" . (* 1000) $ frameTime
             trace . printf "FPS: %.5f" . (1/) $ frameTime
             liftIO pollEvents
@@ -61,7 +63,7 @@ main = do
       loop
 
       liftIO $ putStrLn "Exiting..."
-      debug "Awaiting idle."
+      debug "Awaiting graphics idle."
       awaitIdle
 
   liftIO $ putStrLn "Exited."

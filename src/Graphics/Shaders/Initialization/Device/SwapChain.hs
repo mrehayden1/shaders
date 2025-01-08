@@ -24,8 +24,10 @@ import Graphics.Shaders.Logger.Class
 -- Information about the swap chain.
 data SwapChain = SwapChain {
   swapChainHandle :: VkSwapChain.SwapchainKHR,
+  -- Swap chain image size and format
   swapChainExtent :: VkExtent2D.Extent2D,
   swapChainFormat :: VkSurface.SurfaceFormatKHR,
+  -- Swap chain image framebuffers
   swapChainFramebuffers :: Vector Vk.Framebuffer
 } deriving (Show)
 
