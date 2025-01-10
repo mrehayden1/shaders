@@ -20,6 +20,7 @@ default-extensions:
 - RankNTypes
 - RecordWildCards
 - ScopedTypeVariables
+- StandaloneDeriving
 - UndecidableInstances
 
 # Metadata used when publishing your package

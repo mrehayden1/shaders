@@ -9,16 +9,17 @@ import Control.Monad.Trans
 import Control.Monad.Exception
 import Data.Bits
 import Data.ByteString (ByteString)
+import qualified Data.ByteString.Char8 as BS
 import Data.Default
 import Data.Vector (Vector)
 import Data.Word
 import qualified Data.Vector as V
 import Foreign.Storable
-import Language.SpirV.Internal
-import Language.SpirV.ShaderKind
-import Language.SpirV.Shaderc
-import Language.SpirV.Shaderc.CompileOptions
-import Linear
+import qualified Language.SpirV.Internal as SpirV
+import qualified Language.SpirV.ShaderKind as SpirV
+import qualified Language.SpirV.Shaderc as SpirV
+import qualified Language.SpirV.Shaderc.CompileOptions as SpirV
+import Linear hiding (trace)
 import Text.Printf
 import qualified Vulkan.Core10 as Vk
 import qualified Vulkan.Core10.Pipeline as VkAttrs (
@@ -31,20 +32,20 @@ import Vulkan.CStruct.Extends (SomeStruct(..))
 import qualified Vulkan.Zero as Vk
 
 import Graphics.Shaders
-import Graphics.Shaders.Buffer
 import Graphics.Shaders.Logger.Class
 
 newtype Pipeline v = Pipeline {
   pipelineHandle :: Vk.Pipeline
 }
 
-withPipeline :: forall inpt m. (MonadAsyncException m, MonadLogger m,
-    VertexFormat inpt)
-  => ShadersT m (Pipeline inpt)
-withPipeline = do
+withPipeline :: forall vIn vOut m. (MonadAsyncException m, MonadLogger m,
+    VertexFormat vIn, VertexFormat vOut)
+  => (vIn -> (V4 Float, vOut))
+  -> ShadersT m (Pipeline vIn)
+withPipeline vertexShader = do
   deviceHandle <- getDeviceHandle
   renderPass <- getRenderPass
-  vertexShaderModule <- createVertexShader deviceHandle
+  vertexShaderModule <- createVertexShader deviceHandle vertexShader
   fragmentShaderModule <- createFragmentShader deviceHandle
 
   debug "Creating pipeline layout."
@@ -85,9 +86,9 @@ withPipeline = do
           VkPipeline.renderPass = renderPass,
           VkPipeline.vertexInputState = Just . SomeStruct $ Vk.zero {
             VkPipeline.vertexAttributeDescriptions =
-              vertexAttributeDescription (undefined :: inpt),
+              vertexAttributeDescription (undefined :: vIn),
             VkPipeline.vertexBindingDescriptions = V.singleton
-              . vertexBindingDescription $ (undefined :: inpt)
+              . vertexBindingDescription $ (undefined :: vIn)
           },
           VkPipeline.viewportState = Just . SomeStruct $ Vk.zero {
             VkPipeline.scissorCount = 1,
@@ -126,13 +127,16 @@ withPipeline = do
 
   return $ Pipeline vkPipeline
 
-createVertexShader :: (MonadAsyncException m, MonadLogger m)
+createVertexShader :: forall m input output. (MonadAsyncException m,
+    MonadLogger m, VertexFormat input, VertexFormat output)
   => Vk.Device
+  -> (input -> (V4 Float, output))
   -> ShadersT m Vk.ShaderModule
-createVertexShader device = do
+createVertexShader device _ = do
   debug "Compiling vertex shader source."
-  (S compiledCode :: S 'VertexShader) <-
-    liftIO $ compile code "" "main" (def :: C ())
+  trace . BS.unpack $ "Dumping vertex shader source: \n" <> code
+  (SpirV.S compiledCode :: SpirV.S 'SpirV.VertexShader) <-
+    liftIO $ SpirV.compile code "" "main" (def :: SpirV.C ())
   let createInfo = Vk.zero {
         Vk.code = compiledCode
       }
@@ -144,24 +148,30 @@ createVertexShader device = do
       Vk.destroyShaderModule device s Nothing
     )
  where
-  code :: ByteString
-  code = "\
-    \ #version 460\n\n\
-    \ layout(location = 0) in vec2 inPosition;\n\
-    \ layout(location = 1) in vec3 inColor;\n\n\
-    \ layout(location = 0) out vec3 fragColor;\n\n\
+  inDecls = attributeDeclarations In (undefined :: input)
+
+  outDecls = attributeDeclarations Out (undefined :: output)
+
+  body =
+   "\
     \ void main() {\n\
-    \   gl_Position = vec4(inPosition, 0.0, 1.0);\n\
-    \   fragColor = inColor;\n\
+    \   gl_Position = vec4(in0, 0.0, 1.0);\n\
+    \   out0 = in1;\n\
     \ }"
+
+  code :: ByteString
+  code = "#version 460\n\n"
+    <> inDecls
+    <> outDecls
+    <> body
 
 createFragmentShader :: (MonadAsyncException m, MonadLogger m)
   => Vk.Device
   -> ShadersT m Vk.ShaderModule
 createFragmentShader device = do
   debug "Compiling fragment shader source."
-  (S compiledCode :: S 'FragmentShader) <-
-    liftIO $ compile code "" "main" (def :: C ())
+  (SpirV.S compiledCode :: SpirV.S 'SpirV.FragmentShader) <-
+    liftIO $ SpirV.compile code "" "main" (def :: SpirV.C ())
   let createInfo = Vk.zero {
         Vk.code = compiledCode
       }
@@ -182,14 +192,43 @@ createFragmentShader device = do
     \   outColor = vec4(fragColor, 1.0);\n\
     \ }"
 
-class Bufferable a => VertexFormat a where
+-- Constraint: vertices are 4 byte aligned
+class VertexFormat a where
   vertexAttributes :: a -> [VertexAttribute]
   vertexStride :: a -> Word32 -- in bytes
 
 data VertexAttribute = VertexAttribute {
   attributeFormat :: Vk.Format,
-  attributeOffset :: Word32 -- in bytes
+  attributeOffset :: Word32, -- in bytes
+  attributeType :: GlslType
 }
+
+data GlslType = Float | Vec2 | Vec3 | Vec4
+
+data InOut = In | Out
+
+inOut :: InOut -> ByteString
+inOut io =
+  case io of
+    In  -> "in"
+    Out -> "out"
+
+attributeDeclarations :: forall a. VertexFormat a => InOut -> a -> ByteString
+attributeDeclarations io _ =
+  let attrs = vertexAttributes (undefined :: a)
+  in (<> "\n") . mconcat . flip fmap (zip attrs [0..])
+       $ \(VertexAttribute{..}, i) ->
+            let n = BS.pack . show $ (i :: Int)
+            in "layout(location = " <> n <> ") " <> inOut io <> " "
+                 <> glslType attributeType <> " " <> inOut io <> n <> ";\n"
+
+glslType :: GlslType -> ByteString
+glslType t =
+  case t of
+    Float -> "float"
+    Vec2  -> "vec2"
+    Vec3  -> "vec3"
+    Vec4  -> "vec4"
 
 vertexBindingDescription :: forall a. VertexFormat a
   => a
@@ -217,7 +256,8 @@ instance VertexFormat Float where
   vertexAttributes _ = [
       VertexAttribute {
         attributeFormat = Vk.FORMAT_R32_SFLOAT,
-        attributeOffset = 0
+        attributeOffset = 0,
+        attributeType = Float
       }
     ]
   vertexStride _ = fromIntegral $ sizeOf (undefined :: Float)
@@ -226,7 +266,8 @@ instance VertexFormat (V2 Float) where
   vertexAttributes _ = [
       VertexAttribute {
         attributeFormat = Vk.FORMAT_R32G32_SFLOAT,
-        attributeOffset = 0
+        attributeOffset = 0,
+        attributeType = Vec2
       }
     ]
   vertexStride _ = fromIntegral $ sizeOf (undefined :: V2 Float)
@@ -235,7 +276,8 @@ instance VertexFormat (V3 Float) where
   vertexAttributes _ = [
       VertexAttribute {
         attributeFormat = Vk.FORMAT_R32G32B32_SFLOAT,
-        attributeOffset = 0
+        attributeOffset = 0,
+        attributeType = Vec3
       }
     ]
   vertexStride _ = fromIntegral $ sizeOf (undefined :: V3 Float)
@@ -244,7 +286,8 @@ instance VertexFormat (V4 Float) where
   vertexAttributes _ = [
       VertexAttribute {
         attributeFormat = Vk.FORMAT_R32G32B32A32_SFLOAT,
-        attributeOffset = 0
+        attributeOffset = 0,
+        attributeType = Vec4
       }
     ]
   vertexStride _ = fromIntegral $ sizeOf (undefined :: V4 Float)

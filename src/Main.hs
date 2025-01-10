@@ -2,11 +2,11 @@ module Main (
   main
 ) where
 
-import Control.Monad
 import Control.Monad.Codensity
 import Control.Monad.Reader
 import Data.IORef
 import Data.Time.Clock
+import Linear hiding (trace)
 import Text.Printf
 
 import Graphics.Shaders
@@ -44,7 +44,7 @@ main = do
       timeRef <- liftIO $ newIORef =<< getCurrentTime
 
       vertexBuffer <- withVerticesAsBuffer vertexData
-      pipeline <- withPipeline
+      pipeline <- withPipeline (\(V2 x y, clr) -> (V4 x y 0 1, clr))
 
       let loop = do
             drawFrame pipeline vertexBuffer

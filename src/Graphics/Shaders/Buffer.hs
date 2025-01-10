@@ -2,7 +2,7 @@ module Graphics.Shaders.Buffer (
   vertexData,
 
   VertexBuffer(..),
-  Bufferable,
+  B,
 
   withVerticesAsBuffer
 ) where
@@ -47,13 +47,13 @@ data VertexBuffer a = VertexBuffer {
   vertexBufferNumVertices :: Word32
 }
 
-withVerticesAsBuffer :: forall a m. (Storable (Vertex a),
-    MonadAsyncException m, MonadLogger m)
+withVerticesAsBuffer :: forall a m. (Storable (B a), MonadAsyncException m,
+    MonadLogger m)
   => [a]
   -> ShadersT m (VertexBuffer a)
 withVerticesAsBuffer vertices = do
   deviceHandle <- getDeviceHandle
-  let stride = fromIntegral . sizeOf $ (undefined :: Vertex a)
+  let stride = fromIntegral . sizeOf $ (undefined :: B a)
       numElems = fromIntegral . length $ vertices
       bufferSize = stride * numElems
 
@@ -77,7 +77,7 @@ withVerticesAsBuffer vertices = do
   -- Fill the buffer
   ptr <-
     VkMemory.mapMemory deviceHandle stagingBufferMemory 0 bufferSize Vk.zero
-  liftIO $ pokeArray (castPtr ptr) . fmap Vertex $ vertices
+  liftIO $ pokeArray (castPtr ptr) . fmap B $ vertices
   VkMemory.unmapMemory deviceHandle stagingBufferMemory
 
   commandPool <- getCommandPool
@@ -178,42 +178,37 @@ copyBuffer commandPool src dest size = do
   debug "Destroying temporary command buffer."
   VkCmdBuffer.freeCommandBuffers deviceHandle commandPool cmdBuffers
 
--- Represents tightly packed 4 byte aligned types.
-class Bufferable a
-
-instance Bufferable Float
-instance Bufferable (V2 Float)
-instance Bufferable (V3 Float)
-instance Bufferable (V4 Float)
-instance (Bufferable a, Bufferable b) => Bufferable (a, b)
-instance (Bufferable a, Bufferable b, Bufferable c) => Bufferable (a, b, c)
-
--- Type wrapper for marshalling vertices into buffers.
-newtype Vertex a = Vertex {
+-- Represents tightly packed 4 byte aligned data and type wrapper for
+-- marshalling vertices into buffers with Storable.
+newtype B a = B {
   unVertex :: a
 } deriving (Show)
 
-instance (Storable a, Storable b, Bufferable a, Bufferable b)
-    => Storable (Vertex (a, b)) where
+deriving instance Storable (B Float)
+deriving instance Storable (B (V2 Float))
+deriving instance Storable (B (V3 Float))
+deriving instance Storable (B (V4 Float))
+
+instance (Storable a, Storable b) => Storable (B (a, b)) where
   alignment _ = 4
   peek ptr = do
     a <- peek (castPtr ptr)
     b <- peekByteOff ptr (sizeOf a)
-    return $ Vertex (a, b)
-  poke ptr (Vertex (a, b)) = do
+    return $ B (a, b)
+  poke ptr (B (a, b)) = do
     poke (castPtr ptr) a
     pokeByteOff ptr (sizeOf a) b
   sizeOf _ = sizeOf (undefined :: a) + sizeOf (undefined :: b)
 
-instance (Storable a, Storable b, Storable c, Bufferable a, Bufferable b, Bufferable c)
-    => Storable (Vertex (a, b, c)) where
+instance (Storable a, Storable b, Storable c)
+    => Storable (B (a, b, c)) where
   alignment _ = 4
   peek ptr = do
     a <- peek (castPtr ptr)
     b <- peekByteOff ptr (sizeOf a)
     c <- peekByteOff ptr (sizeOf b)
-    return $ Vertex (a, b, c)
-  poke ptr (Vertex (a, b, c)) = do
+    return $ B (a, b, c)
+  poke ptr (B (a, b, c)) = do
     poke (castPtr ptr) a
     pokeByteOff ptr (sizeOf a) b
     pokeByteOff ptr (sizeOf b) c
