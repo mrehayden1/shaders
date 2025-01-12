@@ -6,9 +6,9 @@ import Control.Monad.Codensity
 import Control.Monad.Reader
 import Data.IORef
 import Data.Time.Clock
-import Linear hiding (trace)
 import Text.Printf
 
+import Data.Linear
 import Graphics.Shaders
 import Graphics.Shaders.Buffer
 import Graphics.Shaders.Draw
@@ -25,6 +25,12 @@ appVersion = "0.1.0"
 appLoggingLevel :: LogLevel
 appLoggingLevel = LogTrace
 
+vertexData :: [(V2 Float, V3 Float)]
+vertexData = [
+    (V2   0.0  (-0.5), V3 1.0 0.0 0.0),
+    (V2 (-0.5)   0.5 , V3 0.0 0.0 1.0),
+    (V2   0.5    0.5 , V3 0.0 1.0 0.0)
+  ]
 
 main :: IO ()
 main = do
@@ -44,7 +50,9 @@ main = do
       timeRef <- liftIO $ newIORef =<< getCurrentTime
 
       vertexBuffer <- withVerticesAsBuffer vertexData
-      pipeline <- withPipeline (\(V2 x y, clr) -> (V4 x y 0 1, clr))
+      --pipeline <- withPipeline (\(pos, clr) -> (V4 (x pos) (y pos) 0 1, clr))
+      pipeline :: Pipeline (V2 Float, V3 Float) <- withPipeline
+        (undefined :: (B (V2 Float), B (V3 Float)) -> (V4 Float, B (V3 Float)))
 
       let loop = do
             drawFrame pipeline vertexBuffer

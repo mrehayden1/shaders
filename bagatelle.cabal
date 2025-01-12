@@ -26,6 +26,7 @@ source-repository head
 executable bagatelle
   main-is: Main.hs
   other-modules:
+      Data.Linear
       Graphics.Shaders
       Graphics.Shaders.Buffer
       Graphics.Shaders.Draw
@@ -47,6 +48,7 @@ executable bagatelle
   hs-source-dirs:
       src
   default-extensions:
+      Arrows
       DataKinds
       FlexibleContexts
       FlexibleInstances
@@ -57,6 +59,7 @@ executable bagatelle
       RecordWildCards
       ScopedTypeVariables
       StandaloneDeriving
+      TypeFamilies
       UndecidableInstances
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
   build-depends:
@@ -67,7 +70,6 @@ executable bagatelle
     , exception-transformers
     , kan-extensions
     , language-spir-v
-    , linear
     , mtl
     , shaderc
     , time

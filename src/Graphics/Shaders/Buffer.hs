@@ -1,21 +1,24 @@
 module Graphics.Shaders.Buffer (
-  vertexData,
-
   VertexBuffer(..),
-  B,
+  B(..),
+
+  Bufferable(..),
+  ToBuffer(..),
 
   withVerticesAsBuffer
 ) where
 
+import Prelude hiding ((.), id)
+import Control.Arrow
+import Control.Category
 import Control.Monad
 import Control.Monad.Exception
-import Control.Monad.Trans
+import Control.Monad.Reader
+import Control.Monad.State
 import qualified Data.Vector as V
 import Data.Word
-import Foreign.Marshal.Array
 import Foreign.Ptr
 import Foreign.Storable
-import Linear
 import qualified Vulkan.Core10.Buffer as VkBuffer
 import qualified Vulkan.Core10.CommandBuffer as VkCmdBuffer
 import qualified Vulkan.Core10.CommandBufferBuilding as VkCmd
@@ -30,32 +33,30 @@ import qualified Vulkan.Core10.Queue as VkQueue
 import Vulkan.CStruct.Extends
 import qualified Vulkan.Zero as Vk
 
+import Data.Linear
 import Graphics.Shaders
 import Graphics.Shaders.Exception
 import Graphics.Shaders.Logger.Class
 import Util.Bits
-
-vertexData :: [(V2 Float, V3 Float)]
-vertexData = [
-    (V2   0.0  (-0.5), V3 1.0 0.0 0.0),
-    (V2 (-0.5)   0.5 , V3 0.0 0.0 1.0),
-    (V2   0.5    0.5 , V3 0.0 1.0 0.0)
-  ]
 
 data VertexBuffer a = VertexBuffer {
   vertexBufferHandle :: Vk.Buffer,
   vertexBufferNumVertices :: Word32
 }
 
-withVerticesAsBuffer :: forall a m. (Storable (B a), MonadAsyncException m,
-    MonadLogger m)
+withVerticesAsBuffer :: forall a m. (MonadAsyncException m, MonadLogger m,
+    Bufferable a)
   => [a]
-  -> ShadersT m (VertexBuffer a)
+  -> ShadersT m (VertexBuffer (BufferFormat a))
 withVerticesAsBuffer vertices = do
   deviceHandle <- getDeviceHandle
-  let stride = fromIntegral . sizeOf $ (undefined :: B a)
-      numElems = fromIntegral . length $ vertices
-      bufferSize = stride * numElems
+
+  let ToBuffer (Kleisli calcStride) (Kleisli bufferer)
+        = toBuffer :: ToBuffer a (BufferFormat a)
+
+  let stride = flip execState 0 . calcStride $ (undefined :: a)
+      numElems = length vertices
+      bufferSize = stride * fromIntegral numElems
 
   -- Create a vertex buffer
   debug "Creating vertex buffer."
@@ -77,7 +78,7 @@ withVerticesAsBuffer vertices = do
   -- Fill the buffer
   ptr <-
     VkMemory.mapMemory deviceHandle stagingBufferMemory 0 bufferSize Vk.zero
-  liftIO $ pokeArray (castPtr ptr) . fmap B $ vertices
+  _ <- liftIO . flip runStateT ptr . mapM bufferer $ vertices
   VkMemory.unmapMemory deviceHandle stagingBufferMemory
 
   commandPool <- getCommandPool
@@ -178,40 +179,84 @@ copyBuffer commandPool src dest size = do
   debug "Destroying temporary command buffer."
   VkCmdBuffer.freeCommandBuffers deviceHandle commandPool cmdBuffers
 
--- Represents tightly packed 4 byte aligned data and type wrapper for
--- marshalling vertices into buffers with Storable.
-newtype B a = B {
-  unVertex :: a
+class Bufferable a where
+  type BufferFormat a
+  toBuffer :: ToBuffer a (BufferFormat a)
+
+data ToBuffer a b = ToBuffer
+  -- Calculates stride
+  (Kleisli (State Word64) a b)
+  -- Buffers vertices
+  (Kleisli (StateT (Ptr ()) IO) a b)
+
+instance Category ToBuffer where
+  id = ToBuffer id id
+  (ToBuffer a b) . (ToBuffer a' b') = ToBuffer (a . a') (b . b')
+
+instance Arrow ToBuffer where
+  arr f = ToBuffer (arr f) (arr f)
+  first (ToBuffer a b) = ToBuffer (first a) (first b)
+
+-- Tightly packed 4 byte aligned data.
+data B a = B {
+  bOffset :: Word32, -- in bytes
+  bStride :: Word64
 } deriving (Show)
 
-deriving instance Storable (B Float)
-deriving instance Storable (B (V2 Float))
-deriving instance Storable (B (V3 Float))
-deriving instance Storable (B (V4 Float))
+toBufferScalar :: forall a. Storable a => ToBuffer a (B a)
+toBufferScalar = ToBuffer (Kleisli (const addStride)) (Kleisli doBuffer)
+ where
+  addStride = do
+    let sz = sizeOf (undefined :: a)
+    modify ((+) $ fromIntegral sz)
+    return $ B {
+        bOffset = fromIntegral sz,
+        bStride = fromIntegral sz
+      }
 
-instance (Storable a, Storable b) => Storable (B (a, b)) where
-  alignment _ = 4
-  peek ptr = do
-    a <- peek (castPtr ptr)
-    b <- peekByteOff ptr (sizeOf a)
-    return $ B (a, b)
-  poke ptr (B (a, b)) = do
-    poke (castPtr ptr) a
-    pokeByteOff ptr (sizeOf a) b
-  sizeOf _ = sizeOf (undefined :: a) + sizeOf (undefined :: b)
+  doBuffer a = do
+    ptr <- get
+    put $ ptr `plusPtr` sizeOf a
+    liftIO $ poke (castPtr ptr) a
+    return $ B {
+        bOffset = fromIntegral $ sizeOf a,
+        bStride = fromIntegral $ sizeOf a
+      }
 
-instance (Storable a, Storable b, Storable c)
-    => Storable (B (a, b, c)) where
-  alignment _ = 4
-  peek ptr = do
-    a <- peek (castPtr ptr)
-    b <- peekByteOff ptr (sizeOf a)
-    c <- peekByteOff ptr (sizeOf b)
-    return $ B (a, b, c)
-  poke ptr (B (a, b, c)) = do
-    poke (castPtr ptr) a
-    pokeByteOff ptr (sizeOf a) b
-    pokeByteOff ptr (sizeOf b) c
-  sizeOf _ = sizeOf (undefined :: a)
-               + sizeOf (undefined :: b)
-               + sizeOf (undefined :: c)
+instance Bufferable Float where
+  type BufferFormat Float = B Float
+  toBuffer = toBufferScalar
+
+instance (Bufferable a, Bufferable b) => Bufferable (a, b) where
+  type BufferFormat (a, b) = (BufferFormat a, BufferFormat b)
+  toBuffer = proc ~(a, b) -> do
+    a' <- toBuffer -< a
+    b' <- toBuffer -< b
+    returnA -< (a', b')
+
+instance (Bufferable a, Bufferable b, Bufferable c)
+    => Bufferable (a, b, c) where
+  type BufferFormat (a, b, c)
+          = (BufferFormat a, BufferFormat b, BufferFormat c)
+  toBuffer = proc ~(a, b, c) -> do
+    (a', b') <- toBuffer -< (a, b)
+    c' <- toBuffer -< c
+    returnA -< (a', b', c')
+
+instance Bufferable (V2 Float) where
+  type BufferFormat (V2 Float) = B (V2 Float)
+  toBuffer = proc ~(V2 a b) -> do
+    (a', _) <- toBuffer -< (a, b)
+    returnA -< B {
+      bOffset = bOffset a',
+      bStride = 2 * bStride a'
+    }
+
+instance Bufferable (V3 Float) where
+  type BufferFormat (V3 Float) = B (V3 Float)
+  toBuffer = proc ~(V3 a b c) -> do
+    (a', _, _) <- toBuffer -< (a, b, c)
+    returnA -< B {
+      bOffset = bOffset a',
+      bStride = 3 * bStride a'
+    }

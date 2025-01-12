@@ -25,7 +25,7 @@ import Graphics.Shaders.Pipeline
 
 drawFrame :: (MonadIO m, MonadLogger m)
   => Pipeline a
-  -> VertexBuffer a
+  -> VertexBuffer (BufferFormat a)
   -> ShadersT m ()
 drawFrame Pipeline{..} vertexBuffer = do
   Frame{..} <- getCurrentFrame

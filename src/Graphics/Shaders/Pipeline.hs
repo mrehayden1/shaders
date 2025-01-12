@@ -1,25 +1,28 @@
 module Graphics.Shaders.Pipeline (
+  S(..),
   Pipeline(..),
 
   withPipeline
 ) where
 
+import Prelude hiding (id, (.))
+import Control.Arrow
+import Control.Category
 import Control.Monad
-import Control.Monad.Trans
 import Control.Monad.Exception
+import Control.Monad.Reader
+import Control.Monad.State
+import Control.Monad.Writer
 import Data.Bits
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS
 import Data.Default
-import Data.Vector (Vector)
 import Data.Word
 import qualified Data.Vector as V
-import Foreign.Storable
 import qualified Language.SpirV.Internal as SpirV
 import qualified Language.SpirV.ShaderKind as SpirV
 import qualified Language.SpirV.Shaderc as SpirV
 import qualified Language.SpirV.Shaderc.CompileOptions as SpirV
-import Linear hiding (trace)
 import Text.Printf
 import qualified Vulkan.Core10 as Vk
 import qualified Vulkan.Core10.Pipeline as VkAttrs (
@@ -31,22 +34,37 @@ import qualified Vulkan.Core10.Pipeline as VkPipeline hiding (
 import Vulkan.CStruct.Extends (SomeStruct(..))
 import qualified Vulkan.Zero as Vk
 
+import Data.Linear
 import Graphics.Shaders
+import Graphics.Shaders.Buffer
 import Graphics.Shaders.Logger.Class
 
 newtype Pipeline v = Pipeline {
   pipelineHandle :: Vk.Pipeline
 }
 
-withPipeline :: forall vIn vOut m. (MonadAsyncException m, MonadLogger m,
-    VertexFormat vIn, VertexFormat vOut)
+-- Shader expressions.
+newtype S a = S a
+
+withPipeline :: forall input vIn vOut m.
+ (Bufferable input, BufferFormat input ~ vIn,
+  MonadAsyncException m, MonadLogger m, VertexInput vIn, VertexInput vOut)
   => (vIn -> (V4 Float, vOut))
-  -> ShadersT m (Pipeline vIn)
+  -> ShadersT m (Pipeline input)
 withPipeline vertexShader = do
   deviceHandle <- getDeviceHandle
   renderPass <- getRenderPass
   vertexShaderModule <- createVertexShader deviceHandle vertexShader
   fragmentShaderModule <- createFragmentShader deviceHandle
+
+  let ToBuffer (Kleisli calcStride) _ = toBuffer
+      (b, stride) = flip runState 0 . calcStride $ (undefined :: input)
+
+  let ToVertex (Kleisli buildVertexAttrDescrs) _
+        = toVertex :: ToVertex vIn (VertexFormat vIn)
+
+  let (vertexAttrDescrs, _) = flip runState (0, 0) . execWriterT
+        . buildVertexAttrDescrs $ b
 
   debug "Creating pipeline layout."
   layout <- fromCps $ bracket
@@ -86,9 +104,12 @@ withPipeline vertexShader = do
           VkPipeline.renderPass = renderPass,
           VkPipeline.vertexInputState = Just . SomeStruct $ Vk.zero {
             VkPipeline.vertexAttributeDescriptions =
-              vertexAttributeDescription (undefined :: vIn),
-            VkPipeline.vertexBindingDescriptions = V.singleton
-              . vertexBindingDescription $ (undefined :: vIn)
+              V.fromList vertexAttrDescrs,
+            VkPipeline.vertexBindingDescriptions = V.singleton $ Vk.zero {
+              VkBinding.binding = 0,
+              VkBinding.inputRate = Vk.VERTEX_INPUT_RATE_VERTEX,
+              VkBinding.stride = fromIntegral stride
+            }
           },
           VkPipeline.viewportState = Just . SomeStruct $ Vk.zero {
             VkPipeline.scissorCount = 1,
@@ -128,11 +149,26 @@ withPipeline vertexShader = do
   return $ Pipeline vkPipeline
 
 createVertexShader :: forall m input output. (MonadAsyncException m,
-    MonadLogger m, VertexFormat input, VertexFormat output)
+    MonadLogger m, VertexInput input, VertexInput output)
   => Vk.Device
   -> (input -> (V4 Float, output))
   -> ShadersT m Vk.ShaderModule
 createVertexShader device _ = do
+  let ToVertex _ (Kleisli buildInDecls)
+        = toVertex :: ToVertex input (VertexFormat input)
+      ToVertex _ (Kleisli buildOutDecls)
+        = toVertex :: ToVertex output (VertexFormat output)
+
+  let inDecls = execWriter . flip runStateT 0 . flip runReaderT In
+        . buildInDecls $ (undefined :: input)
+      outDecls = execWriter . flip runStateT 0 . flip runReaderT Out
+        . buildOutDecls $ (undefined :: output)
+
+  let code = "#version 460\n\n"
+        <> inDecls
+        <> outDecls
+        <> body
+
   debug "Compiling vertex shader source."
   trace . BS.unpack $ "Dumping vertex shader source: \n" <> code
   (SpirV.S compiledCode :: SpirV.S 'SpirV.VertexShader) <-
@@ -148,22 +184,12 @@ createVertexShader device _ = do
       Vk.destroyShaderModule device s Nothing
     )
  where
-  inDecls = attributeDeclarations In (undefined :: input)
-
-  outDecls = attributeDeclarations Out (undefined :: output)
-
   body =
    "\
     \ void main() {\n\
     \   gl_Position = vec4(in0, 0.0, 1.0);\n\
     \   out0 = in1;\n\
     \ }"
-
-  code :: ByteString
-  code = "#version 460\n\n"
-    <> inDecls
-    <> outDecls
-    <> body
 
 createFragmentShader :: (MonadAsyncException m, MonadLogger m)
   => Vk.Device
@@ -193,17 +219,31 @@ createFragmentShader device = do
     \ }"
 
 -- Constraint: vertices are 4 byte aligned
-class VertexFormat a where
-  vertexAttributes :: a -> [VertexAttribute]
-  vertexStride :: a -> Word32 -- in bytes
+class VertexInput a where
+  type VertexFormat a
+  toVertex :: ToVertex a (VertexFormat a)
 
-data VertexAttribute = VertexAttribute {
-  attributeFormat :: Vk.Format,
-  attributeOffset :: Word32, -- in bytes
-  attributeType :: GlslType
-}
+data ToVertex a b = ToVertex
+  -- Build Vulcan attribute descriptions
+  (Kleisli AttrDescrM a b)
+  -- Build GLSL declarations
+  (Kleisli DeclM a b)
 
-data GlslType = Float | Vec2 | Vec3 | Vec4
+instance Category ToVertex where
+  id = ToVertex id id
+  (ToVertex a b) . (ToVertex a' b') = ToVertex (a . a') (b . b')
+
+instance Arrow ToVertex where
+  arr f = ToVertex (arr f) (arr f)
+  first (ToVertex a b) = ToVertex (first a) (first b)
+
+type AttrDescrM =
+  WriterT
+    [VkAttrs.VertexInputAttributeDescription]
+    -- Offset, location
+    (State (Word32, Word32))
+
+type DeclM = ReaderT InOut (StateT Int (Writer ByteString))
 
 data InOut = In | Out
 
@@ -213,108 +253,85 @@ inOut io =
     In  -> "in"
     Out -> "out"
 
-attributeDeclarations :: forall a. VertexFormat a => InOut -> a -> ByteString
-attributeDeclarations io _ =
-  let attrs = vertexAttributes (undefined :: a)
-  in (<> "\n") . mconcat . flip fmap (zip attrs [0..])
-       $ \(VertexAttribute{..}, i) ->
-            let n = BS.pack . show $ (i :: Int)
-            in "layout(location = " <> n <> ") " <> inOut io <> " "
-                 <> glslType attributeType <> " " <> inOut io <> n <> ";\n"
-
-glslType :: GlslType -> ByteString
-glslType t =
-  case t of
-    Float -> "float"
-    Vec2  -> "vec2"
-    Vec3  -> "vec3"
-    Vec4  -> "vec4"
-
-vertexBindingDescription :: forall a. VertexFormat a
-  => a
-  -> VkBinding.VertexInputBindingDescription
-vertexBindingDescription _ = Vk.zero {
-    VkBinding.binding = 0,
-    VkBinding.inputRate = Vk.VERTEX_INPUT_RATE_VERTEX,
-    VkBinding.stride = vertexStride (undefined :: a)
-  }
-
-vertexAttributeDescription :: forall a. VertexFormat a
-  => a
-  -> Vector VkAttrs.VertexInputAttributeDescription
-vertexAttributeDescription _ =
-  let attrs = vertexAttributes (undefined :: a)
-  in V.fromList . flip fmap (zip attrs [0..]) $ \(VertexAttribute{..}, i) ->
-       Vk.zero {
+instance VertexInput (B Float) where
+  type VertexFormat (B Float) = S Float
+  toVertex = ToVertex
+    (Kleisli $ \B{..} -> do
+       (off, i) <- get
+       tell [Vk.zero {
          VkAttrs.binding = 0,
-         VkAttrs.format = attributeFormat,
+         VkAttrs.format = Vk.FORMAT_R32_SFLOAT,
          VkAttrs.location = i,
-         VkAttrs.offset = attributeOffset
-       }
+         VkAttrs.offset = off
+       }]
+       let off' = off + fromIntegral bStride
+           i'   = i + 1
+       put (off', i')
+       return undefined
+    )
+    (Kleisli . const . ReaderT $ \io -> do
+       n <- get
+       put $ n + 1
+       let n' = BS.pack . show $ n
+       tell $ "layout(location=" <> n' <> ") " <> inOut io <> " float "
+         <> inOut io <> n' <> ";"
+       return undefined
+    )
 
-instance VertexFormat Float where
-  vertexAttributes _ = [
-      VertexAttribute {
-        attributeFormat = Vk.FORMAT_R32_SFLOAT,
-        attributeOffset = 0,
-        attributeType = Float
-      }
-    ]
-  vertexStride _ = fromIntegral $ sizeOf (undefined :: Float)
+instance VertexInput (B (V2 Float)) where
+  type VertexFormat (B (V2 Float)) = S (V2 Float)
+  toVertex = ToVertex
+    (Kleisli $ \B{..} -> do
+       (off, i) <- get
+       tell [Vk.zero {
+         VkAttrs.binding = 0,
+         VkAttrs.format = Vk.FORMAT_R32G32_SFLOAT,
+         VkAttrs.location = i,
+         VkAttrs.offset = off
+       }]
+       let off' = off + fromIntegral bStride
+           i'   = i + 1
+       put (off', i')
+       return undefined
+    )
+    (Kleisli . const . ReaderT $ \io -> do
+       n <- get
+       put $ n + 1
+       let n' = BS.pack . show $ n
+       tell $ "layout(location=" <> n' <> ") " <> inOut io <> " vec2 "
+         <> inOut io <> n' <> ";\n"
+       return undefined
+    )
 
-instance VertexFormat (V2 Float) where
-  vertexAttributes _ = [
-      VertexAttribute {
-        attributeFormat = Vk.FORMAT_R32G32_SFLOAT,
-        attributeOffset = 0,
-        attributeType = Vec2
-      }
-    ]
-  vertexStride _ = fromIntegral $ sizeOf (undefined :: V2 Float)
+instance VertexInput (B (V3 Float)) where
+  type VertexFormat (B (V3 Float)) = S (V3 Float)
+  toVertex = ToVertex
+    (Kleisli $ \B{..} -> do
+       (off, i) <- get
+       tell [Vk.zero {
+         VkAttrs.binding = 0,
+         VkAttrs.format = Vk.FORMAT_R32G32B32_SFLOAT,
+         VkAttrs.location = i,
+         VkAttrs.offset = off
+       }]
+       let off' = off + fromIntegral bStride
+           i'   = i + 1
+       put (off', i')
+       return undefined
+    )
+    (Kleisli . const . ReaderT $ \io -> do
+       n <- get
+       put $ n + 1
+       let n' = BS.pack . show $ n
+       tell $ "layout(location=" <> n' <> ") " <> inOut io <> " vec3 "
+         <> inOut io <> n' <> ";\n"
+       return undefined
+    )
 
-instance VertexFormat (V3 Float) where
-  vertexAttributes _ = [
-      VertexAttribute {
-        attributeFormat = Vk.FORMAT_R32G32B32_SFLOAT,
-        attributeOffset = 0,
-        attributeType = Vec3
-      }
-    ]
-  vertexStride _ = fromIntegral $ sizeOf (undefined :: V3 Float)
-
-instance VertexFormat (V4 Float) where
-  vertexAttributes _ = [
-      VertexAttribute {
-        attributeFormat = Vk.FORMAT_R32G32B32A32_SFLOAT,
-        attributeOffset = 0,
-        attributeType = Vec4
-      }
-    ]
-  vertexStride _ = fromIntegral $ sizeOf (undefined :: V4 Float)
-
-instance (VertexFormat a, VertexFormat b) => VertexFormat (a, b) where
-  vertexAttributes _ =
-    let attrs  = vertexAttributes (undefined :: a)
-        stride = vertexStride (undefined :: a)
-        attrs' = vertexAttributes (undefined :: b)
-    in attrs <>
-         fmap (\attr ->
-                 attr { attributeOffset = attributeOffset attr + stride })
-              attrs'
-
-  vertexStride _ = vertexStride (undefined :: a)
-                    + vertexStride (undefined :: b)
-
-instance (VertexFormat a, VertexFormat b, VertexFormat c)
-    => VertexFormat (a, b, c) where
-  vertexAttributes _ =
-    let attrs  = vertexAttributes (undefined :: (a, b))
-        stride = vertexStride (undefined :: (a, b))
-        attrs' = vertexAttributes (undefined :: c)
-    in attrs <>
-         fmap (\attr ->
-                 attr { attributeOffset = attributeOffset attr + stride })
-              attrs'
-
-  vertexStride _ = vertexStride (undefined :: (a, b))
-                     + vertexStride (undefined :: c)
+instance (VertexInput a, VertexInput b) => VertexInput (a, b) where
+  type VertexFormat (a, b) = (VertexFormat a, VertexFormat b)
+  toVertex =
+    proc ~(a, b) -> do
+      a' <- toVertex -< a
+      b' <- toVertex -< b
+      returnA -< (a', b')
