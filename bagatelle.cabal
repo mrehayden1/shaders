@@ -26,6 +26,9 @@ source-repository head
 executable bagatelle
   main-is: Main.hs
   other-modules:
+      Control.Monad.State.Extra
+      Control.Monad.Trans.Maybe.Extra
+      Data.Bits.Extra
       Data.Linear
       Graphics.Shaders
       Graphics.Shaders.Buffer
@@ -41,8 +44,6 @@ executable bagatelle
       Graphics.Shaders.Logger.Class
       Graphics.Shaders.Pipeline
       Graphics.Shaders.Shader
-      Util.Bits
-      Util.Maybe
       Window
       Paths_bagatelle
   hs-source-dirs:

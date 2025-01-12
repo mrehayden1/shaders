@@ -16,6 +16,8 @@ import Control.Monad.Exception
 import Control.Monad.Reader
 import Control.Monad.State
 import qualified Data.Vector as V
+import Data.Bits
+import Data.Bits.Extra
 import Data.Word
 import Foreign.Ptr
 import Foreign.Storable
@@ -37,7 +39,6 @@ import Data.Linear
 import Graphics.Shaders
 import Graphics.Shaders.Exception
 import Graphics.Shaders.Logger.Class
-import Util.Bits
 
 data VertexBuffer a = VertexBuffer {
   vertexBufferHandle :: Vk.Buffer,

@@ -1,4 +1,4 @@
-module Util.Maybe (
+module Control.Monad.Trans.Maybe.Extra (
   hoistMaybe
 ) where
 

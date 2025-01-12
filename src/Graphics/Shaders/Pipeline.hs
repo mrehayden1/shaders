@@ -12,6 +12,7 @@ import Control.Monad
 import Control.Monad.Exception
 import Control.Monad.Reader
 import Control.Monad.State
+import Control.Monad.State.Extra
 import Control.Monad.Writer
 import Data.Bits
 import Data.ByteString (ByteString)
@@ -282,22 +283,18 @@ instance VertexInput (B (V2 Float)) where
   type VertexFormat (B (V2 Float)) = S (V2 Float)
   toVertex = ToVertex
     (Kleisli $ \B{..} -> do
-       (off, i) <- get
+       (offset, loc) <- update $
+         \(o, l) -> (o + fromIntegral bStride, l + 1)
        tell [Vk.zero {
          VkAttrs.binding = 0,
          VkAttrs.format = Vk.FORMAT_R32G32_SFLOAT,
-         VkAttrs.location = i,
-         VkAttrs.offset = off
+         VkAttrs.location = loc,
+         VkAttrs.offset = offset
        }]
-       let off' = off + fromIntegral bStride
-           i'   = i + 1
-       put (off', i')
        return undefined
     )
     (Kleisli . const . ReaderT $ \io -> do
-       n <- get
-       put $ n + 1
-       let n' = BS.pack . show $ n
+       n' <- BS.pack . show <$> getNext
        tell $ "layout(location=" <> n' <> ") " <> inOut io <> " vec2 "
          <> inOut io <> n' <> ";\n"
        return undefined
@@ -307,22 +304,18 @@ instance VertexInput (B (V3 Float)) where
   type VertexFormat (B (V3 Float)) = S (V3 Float)
   toVertex = ToVertex
     (Kleisli $ \B{..} -> do
-       (off, i) <- get
+       (offset, loc) <- update $
+         \(o, l) -> (o + fromIntegral bStride, l + 1)
        tell [Vk.zero {
          VkAttrs.binding = 0,
          VkAttrs.format = Vk.FORMAT_R32G32B32_SFLOAT,
-         VkAttrs.location = i,
-         VkAttrs.offset = off
+         VkAttrs.location = loc,
+         VkAttrs.offset = offset
        }]
-       let off' = off + fromIntegral bStride
-           i'   = i + 1
-       put (off', i')
        return undefined
     )
     (Kleisli . const . ReaderT $ \io -> do
-       n <- get
-       put $ n + 1
-       let n' = BS.pack . show $ n
+       n' <- BS.pack . show <$> getNext
        tell $ "layout(location=" <> n' <> ") " <> inOut io <> " vec3 "
          <> inOut io <> n' <> ";\n"
        return undefined

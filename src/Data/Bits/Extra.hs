@@ -1,6 +1,4 @@
-module Util.Bits (
-  module Data.Bits,
-
+module Data.Bits.Extra (
   (.&&.)
 ) where
 
