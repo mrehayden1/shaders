@@ -18,13 +18,14 @@ import Vulkan.Core10.Queue as VkQueue
 import Vulkan.CStruct.Extends as Vk
 import Vulkan.Zero as Vk
 
+import Data.Linear
 import Graphics.Shaders
 import Graphics.Shaders.Buffer
 import Graphics.Shaders.Logger.Class
 import Graphics.Shaders.Pipeline
 
 drawFrame :: (MonadIO m, MonadLogger m)
-  => Pipeline a
+  => Pipeline a (V3 Float)
   -> VertexBuffer (BufferFormat a)
   -> ShadersT m ()
 drawFrame Pipeline{..} vertexBuffer = do

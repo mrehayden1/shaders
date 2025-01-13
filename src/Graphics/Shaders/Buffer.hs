@@ -17,7 +17,6 @@ import Control.Monad.Reader
 import Control.Monad.State
 import qualified Data.Vector as V
 import Data.Bits
-import Data.Bits.Extra
 import Data.Word
 import Foreign.Ptr
 import Foreign.Storable
@@ -35,6 +34,7 @@ import qualified Vulkan.Core10.Queue as VkQueue
 import Vulkan.CStruct.Extends
 import qualified Vulkan.Zero as Vk
 
+import Data.Bits.Extra
 import Data.Linear
 import Graphics.Shaders
 import Graphics.Shaders.Exception

@@ -11,6 +11,7 @@ extra-source-files:
 - CHANGELOG.md
 
 default-extensions:
+- AllowAmbiguousTypes
 - Arrows
 - DataKinds
 - FlexibleContexts
@@ -22,6 +23,7 @@ default-extensions:
 - RecordWildCards
 - ScopedTypeVariables
 - StandaloneDeriving
+- TypeApplications
 - TypeFamilies
 - UndecidableInstances
 

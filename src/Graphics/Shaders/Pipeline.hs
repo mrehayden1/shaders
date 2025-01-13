@@ -12,7 +12,6 @@ import Control.Monad
 import Control.Monad.Exception
 import Control.Monad.Reader
 import Control.Monad.State
-import Control.Monad.State.Extra
 import Control.Monad.Writer
 import Data.Bits
 import Data.ByteString (ByteString)
@@ -35,34 +34,38 @@ import qualified Vulkan.Core10.Pipeline as VkPipeline hiding (
 import Vulkan.CStruct.Extends (SomeStruct(..))
 import qualified Vulkan.Zero as Vk
 
+import Control.Monad.State.Extra
 import Data.Linear
 import Graphics.Shaders
 import Graphics.Shaders.Buffer
+import Graphics.Shaders.Expr
 import Graphics.Shaders.Logger.Class
 
-newtype Pipeline v = Pipeline {
+newtype Pipeline vIn vOut = Pipeline {
   pipelineHandle :: Vk.Pipeline
 }
 
--- Shader expressions.
-newtype S a = S a
-
-withPipeline :: forall input vIn vOut m.
- (Bufferable input, BufferFormat input ~ vIn,
-  MonadAsyncException m, MonadLogger m, VertexInput vIn, VertexInput vOut)
-  => (vIn -> (V4 Float, vOut))
-  -> ShadersT m (Pipeline input)
+withPipeline :: forall input output bIn bOut sIn sOut m.
+ (MonadAsyncException m, MonadLogger m,
+  Bufferable input, BufferFormat input ~ bIn,
+  Bufferable output, BufferFormat output ~ bOut,
+  VertexInput bIn, VertexFormat bIn ~ sIn,
+  VertexInput bOut, VertexFormat bOut ~ sOut,
+  VertexOutput sOut)
+  => (sIn -> (S (V4 Float), sOut))
+  -> ShadersT m (Pipeline input output)
 withPipeline vertexShader = do
   deviceHandle <- getDeviceHandle
   renderPass <- getRenderPass
-  vertexShaderModule <- createVertexShader deviceHandle vertexShader
+  vertexShaderModule <- createVertexShader @bIn @bOut deviceHandle vertexShader
   fragmentShaderModule <- createFragmentShader deviceHandle
 
   let ToBuffer (Kleisli calcStride) _ = toBuffer
       (b, stride) = flip runState 0 . calcStride $ (undefined :: input)
 
   let ToVertex (Kleisli buildVertexAttrDescrs) _
-        = toVertex :: ToVertex vIn (VertexFormat vIn)
+        = toVertex :: ToVertex (BufferFormat input)
+                               (VertexFormat (BufferFormat input))
 
   let (vertexAttrDescrs, _) = flip runState (0, 0) . execWriterT
         . buildVertexAttrDescrs $ b
@@ -71,8 +74,8 @@ withPipeline vertexShader = do
   layout <- fromCps $ bracket
     (Vk.createPipelineLayout deviceHandle Vk.zero Nothing)
     (\l -> do
-      debug "Destroying pipeline layout."
-      Vk.destroyPipelineLayout deviceHandle l Nothing)
+        debug "Destroying pipeline layout."
+        Vk.destroyPipelineLayout deviceHandle l Nothing)
 
   let pipelineCreateInfos = V.singleton . SomeStruct $ Vk.zero {
           VkPipeline.colorBlendState = Just . SomeStruct $ Vk.zero {
@@ -149,26 +152,40 @@ withPipeline vertexShader = do
 
   return $ Pipeline vkPipeline
 
-createVertexShader :: forall m input output. (MonadAsyncException m,
-    MonadLogger m, VertexInput input, VertexInput output)
+createVertexShader :: forall bIn bOut sIn sOut m. (
+    MonadAsyncException m,
+    MonadLogger m,
+    VertexInput bIn,
+    VertexFormat bIn ~ sIn,
+    VertexInput bOut,
+    VertexFormat bOut ~ sOut,
+    VertexOutput sOut)
   => Vk.Device
-  -> (input -> (V4 Float, output))
+  -> (sIn -> (S (V4 Float), sOut))
   -> ShadersT m Vk.ShaderModule
-createVertexShader device _ = do
+createVertexShader device shaderFn = do
   let ToVertex _ (Kleisli buildInDecls)
-        = toVertex :: ToVertex input (VertexFormat input)
-      ToVertex _ (Kleisli buildOutDecls)
-        = toVertex :: ToVertex output (VertexFormat output)
+        = toVertex :: ToVertex bIn sIn
+      ToGLSL (Kleisli buildOutDecls)
+        = toGLSL :: ToGLSL sOut (S ())
 
-  let inDecls = execWriter . flip runStateT 0 . flip runReaderT In
-        . buildInDecls $ (undefined :: input)
-      outDecls = execWriter . flip runStateT 0 . flip runReaderT Out
-        . buildOutDecls $ (undefined :: output)
+  let (input, inDecls) = runWriter . flip evalStateT 0 . flip runReaderT In
+        . buildInDecls $ (undefined :: bIn)
+      (glPos, output) = shaderFn input
+      (body, outDecls) = runWriter . flip evalStateT 0 . flip runReaderT Out
+        . buildOutDecls $ output
 
   let code = "#version 460\n\n"
-        <> inDecls
-        <> outDecls
-        <> body
+        <> inDecls <> "\n"
+        <> outDecls <> "\n"
+        <> "void main() {\n"
+        <> (execExprM $ do
+              n <- unS glPos
+              tell $ "gl_Position = " <> n <> ";\n"
+              return "gl_Position"
+           )
+        <> (execExprM . unS $ body)
+        <> "}"
 
   debug "Compiling vertex shader source."
   trace . BS.unpack $ "Dumping vertex shader source: \n" <> code
@@ -184,13 +201,6 @@ createVertexShader device _ = do
       debug "Destroying vertex shader module."
       Vk.destroyShaderModule device s Nothing
     )
- where
-  body =
-   "\
-    \ void main() {\n\
-    \   gl_Position = vec4(in0, 0.0, 1.0);\n\
-    \   out0 = in1;\n\
-    \ }"
 
 createFragmentShader :: (MonadAsyncException m, MonadLogger m)
   => Vk.Device
@@ -225,9 +235,9 @@ class VertexInput a where
   toVertex :: ToVertex a (VertexFormat a)
 
 data ToVertex a b = ToVertex
-  -- Build Vulcan attribute descriptions
+  -- Builds Vulcan attribute descriptions
   (Kleisli AttrDescrM a b)
-  -- Build GLSL declarations
+  -- Builds GLSL declarations
   (Kleisli DeclM a b)
 
 instance Category ToVertex where
@@ -246,13 +256,18 @@ type AttrDescrM =
 
 type DeclM = ReaderT InOut (StateT Int (Writer ByteString))
 
-data InOut = In | Out
+tellDecl :: ByteString -> DeclM ByteString
+tellDecl typ = do
+  loc <- getNext
+  io <- ask
+  let inOut = case io of { In -> "in"; Out -> "out" }
+      loc' = BS.pack . show $ loc
+      name = inOut <> loc'
+  tell $ "layout(location=" <> loc' <> ") " <> inOut <> " " <> typ <> " "
+           <> name <> ";\n"
+  return name
 
-inOut :: InOut -> ByteString
-inOut io =
-  case io of
-    In  -> "in"
-    Out -> "out"
+data InOut = In | Out
 
 instance VertexInput (B Float) where
   type VertexFormat (B Float) = S Float
@@ -270,13 +285,8 @@ instance VertexInput (B Float) where
        put (off', i')
        return undefined
     )
-    (Kleisli . const . ReaderT $ \io -> do
-       n <- get
-       put $ n + 1
-       let n' = BS.pack . show $ n
-       tell $ "layout(location=" <> n' <> ") " <> inOut io <> " float "
-         <> inOut io <> n' <> ";"
-       return undefined
+    (Kleisli . const $ do
+       S . return <$> tellDecl "float"
     )
 
 instance VertexInput (B (V2 Float)) where
@@ -293,11 +303,8 @@ instance VertexInput (B (V2 Float)) where
        }]
        return undefined
     )
-    (Kleisli . const . ReaderT $ \io -> do
-       n' <- BS.pack . show <$> getNext
-       tell $ "layout(location=" <> n' <> ") " <> inOut io <> " vec2 "
-         <> inOut io <> n' <> ";\n"
-       return undefined
+    (Kleisli . const $ do
+       S . return <$> tellDecl "vec2"
     )
 
 instance VertexInput (B (V3 Float)) where
@@ -314,11 +321,8 @@ instance VertexInput (B (V3 Float)) where
        }]
        return undefined
     )
-    (Kleisli . const . ReaderT $ \io -> do
-       n' <- BS.pack . show <$> getNext
-       tell $ "layout(location=" <> n' <> ") " <> inOut io <> " vec3 "
-         <> inOut io <> n' <> ";\n"
-       return undefined
+    (Kleisli . const $ do
+       S . return <$> tellDecl "vec3"
     )
 
 instance (VertexInput a, VertexInput b) => VertexInput (a, b) where
@@ -328,3 +332,47 @@ instance (VertexInput a, VertexInput b) => VertexInput (a, b) where
       a' <- toVertex -< a
       b' <- toVertex -< b
       returnA -< (a', b')
+
+class VertexOutput a where
+  toGLSL :: ToGLSL a (S ())
+
+newtype ToGLSL a b = ToGLSL
+  -- Builds GLSL declarations
+  (Kleisli DeclM a b)
+
+instance Category ToGLSL where
+  id = ToGLSL id
+  (ToGLSL a) . (ToGLSL b) = ToGLSL (a . b)
+
+instance Arrow ToGLSL where
+  arr = ToGLSL . arr
+  first (ToGLSL a) = ToGLSL (first a)
+
+instance VertexOutput (S Float) where
+  toGLSL = ToGLSL
+    (Kleisli $ \a -> do
+      n <- tellDecl "float"
+      return . S $ do
+        a' <- unS a
+        tell $ n <> " = " <> a' <> ";\n"
+        return ""
+    )
+
+instance VertexOutput (S (V3 Float)) where
+  toGLSL = ToGLSL
+    (Kleisli $ \a -> do
+      n <- tellDecl "vec3"
+      return . S $ do
+        a' <- unS a
+        tell $ n <> " = " <> a' <> ";\n"
+        return ""
+    )
+
+instance (VertexOutput (S a), VertexOutput (S b)) => VertexOutput (S a, S b) where
+  toGLSL = proc ~(a, b) -> do
+    aOut <- toGLSL -< a
+    bOut <- toGLSL -< b
+    returnA -< S $ do
+      _ <- unS aOut
+      _ <- unS bOut
+      return ""

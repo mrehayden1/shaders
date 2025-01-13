@@ -8,7 +8,6 @@ module Graphics.Shaders.Initialization.Device.Physical (
 import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Maybe
-import Control.Monad.Trans.Maybe.Extra
 import Data.Bits
 import Data.ByteString.UTF8 as UTF8
 import Data.Function
@@ -30,6 +29,7 @@ import qualified Vulkan.Extensions.VK_KHR_surface as VkSurface
 import qualified Vulkan.Zero as Vk
 import Witherable
 
+import Control.Monad.Trans.Maybe.Extra
 import Graphics.Shaders.Logger.Class
 
 -- A graphics enabled physical device, such as a GPU or CPU.

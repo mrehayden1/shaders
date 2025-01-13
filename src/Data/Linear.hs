@@ -4,7 +4,9 @@ module Data.Linear (
   V4(..),
 
   R1(..),
-  R2(..)
+  R2(..),
+  R3(..),
+  R4(..)
 ) where
 
 import Foreign.Ptr
@@ -60,27 +62,44 @@ instance Storable a => Storable (V4 a) where
   sizeOf _ = 3 * sizeOf (undefined :: a)
 
 
-class R1 f where
-  x :: f a -> a
+class R1 f a where
+  x :: f -> a
 
-instance R1 V2 where
+instance R1 (V2 a) a where
   x (V2 x' _) = x'
 
-instance R1 V3 where
+instance R1 (V3 a) a where
   x (V3 x' _ _) = x'
 
-instance R1 V4 where
+instance R1 (V4 a) a where
   x (V4 x' _ _ _) = x'
 
 
-class R1 f => R2 f where
-  y :: f a -> a
+class R1 f a => R2 f a where
+  y :: f -> a
 
-instance R2 V2 where
+instance R2 (V2 a) a where
   y (V2 _ a) = a
 
-instance R2 V3 where
+instance R2 (V3 a) a where
   y (V3 _ a _) = a
 
-instance R2 V4 where
+instance R2 (V4 a) a where
   y (V4 _ a _ _) = a
+
+
+class R2 f a => R3 f a where
+  z :: f -> a
+
+instance R3 (V3 a) a where
+  z (V3 _ _ a) = a
+
+instance R3 (V4 a) a where
+  z (V4 _ _ a _) = a
+
+
+class R3 f a => R4 f a where
+  w :: f -> a
+
+instance R4 (V4 a) a where
+  w (V4 _ _ _ a) = a

@@ -12,6 +12,7 @@ import Data.Linear
 import Graphics.Shaders
 import Graphics.Shaders.Buffer
 import Graphics.Shaders.Draw
+import Graphics.Shaders.Expr
 import Graphics.Shaders.Logger.Base
 import Graphics.Shaders.Pipeline
 import Window
@@ -44,15 +45,14 @@ main = do
 
     runShadersT window $ do
 
-      liftIO $ putStrLn "Finished startup."
-      liftIO $ putStrLn "Running...\n"
-
       timeRef <- liftIO $ newIORef =<< getCurrentTime
 
       vertexBuffer <- withVerticesAsBuffer vertexData
-      --pipeline <- withPipeline (\(pos, clr) -> (V4 (x pos) (y pos) 0 1, clr))
-      pipeline :: Pipeline (V2 Float, V3 Float) <- withPipeline
-        (undefined :: (B (V2 Float), B (V3 Float)) -> (V4 Float, B (V3 Float)))
+      pipeline <- withPipeline @(V2 Float, V3 Float)
+        $ \(pos, clr) -> (vec4 (x pos) (y pos) 0 1, clr)
+
+      liftIO $ putStrLn "Finished startup."
+      liftIO $ putStrLn "Running...\n"
 
       let loop = do
             drawFrame pipeline vertexBuffer

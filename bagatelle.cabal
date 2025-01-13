@@ -34,6 +34,7 @@ executable bagatelle
       Graphics.Shaders.Buffer
       Graphics.Shaders.Draw
       Graphics.Shaders.Exception
+      Graphics.Shaders.Expr
       Graphics.Shaders.Initialization.Device
       Graphics.Shaders.Initialization.Device.Physical
       Graphics.Shaders.Initialization.Device.SwapChain
@@ -49,6 +50,7 @@ executable bagatelle
   hs-source-dirs:
       src
   default-extensions:
+      AllowAmbiguousTypes
       Arrows
       DataKinds
       FlexibleContexts
@@ -60,6 +62,7 @@ executable bagatelle
       RecordWildCards
       ScopedTypeVariables
       StandaloneDeriving
+      TypeApplications
       TypeFamilies
       UndecidableInstances
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
