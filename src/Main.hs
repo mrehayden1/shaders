@@ -10,11 +10,6 @@ import Text.Printf
 
 import Data.Linear
 import Graphics.Shaders
-import Graphics.Shaders.Buffer
-import Graphics.Shaders.Draw
-import Graphics.Shaders.Expr
-import Graphics.Shaders.Logger.Base
-import Graphics.Shaders.Pipeline
 import Window
 
 appName :: String
@@ -62,7 +57,7 @@ main = do
             liftIO $ writeIORef timeRef endTime
             let frameTime = realToFrac . diffUTCTime endTime
                               $ startTime :: Float
-            trace . printf "Frame time: %.5f" . (* 1000) $ frameTime
+            trace . printf "Frame time: %.5fms" . (* 1000) $ frameTime
             trace . printf "FPS: %.5f" . (1/) $ frameTime
             liftIO pollEvents
             close <- liftIO $ windowShouldClose window

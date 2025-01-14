@@ -36,9 +36,9 @@ import qualified Vulkan.Zero as Vk
 
 import Control.Monad.State.Extra
 import Data.Linear
-import Graphics.Shaders
+import Graphics.Shaders.Base
 import Graphics.Shaders.Buffer
-import Graphics.Shaders.Expr
+import Graphics.Shaders.Internal.Expr
 import Graphics.Shaders.Logger.Class
 
 newtype Pipeline vIn vOut = Pipeline {
@@ -179,12 +179,12 @@ createVertexShader device shaderFn = do
         <> inDecls <> "\n"
         <> outDecls <> "\n"
         <> "void main() {\n"
-        <> (execExprM $ do
-              n <- unS glPos
-              tell $ "gl_Position = " <> n <> ";\n"
-              return "gl_Position"
-           )
-        <> (execExprM . unS $ body)
+        <> execExprM 2 (do
+               _ <- unS body
+               n <- unS glPos
+               tellExpr $ "gl_Position = " <> n
+               return undefined
+             )
         <> "}"
 
   debug "Compiling vertex shader source."
@@ -354,7 +354,7 @@ instance VertexOutput (S Float) where
       n <- tellDecl "float"
       return . S $ do
         a' <- unS a
-        tell $ n <> " = " <> a' <> ";\n"
+        tellExpr $ n <> " = " <> a'
         return ""
     )
 
@@ -364,7 +364,7 @@ instance VertexOutput (S (V3 Float)) where
       n <- tellDecl "vec3"
       return . S $ do
         a' <- unS a
-        tell $ n <> " = " <> a' <> ";\n"
+        tellExpr $ n <> " = " <> a'
         return ""
     )
 

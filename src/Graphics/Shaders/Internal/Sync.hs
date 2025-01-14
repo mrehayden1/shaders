@@ -1,4 +1,4 @@
-module Graphics.Shaders.Initialization.Sync (
+module Graphics.Shaders.Internal.Sync (
   SyncObjects(..),
   withSyncObjects
 ) where
@@ -14,7 +14,7 @@ import qualified Vulkan.Core10.QueueSemaphore as VkSemaphore
 import qualified Vulkan.Zero as Vk
 
 import Graphics.Shaders.Logger.Class
-import Graphics.Shaders.Initialization.Device
+import Graphics.Shaders.Internal.Device
 
 data SyncObjects = SyncObjects {
    syncInFlightFence :: Vk.Fence,

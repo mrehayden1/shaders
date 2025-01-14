@@ -1,4 +1,4 @@
-module Graphics.Shaders.Initialization.Device.SwapChain (
+module Graphics.Shaders.Internal.Device.SwapChain (
   SwapChain(..),
 
   withSwapChain
@@ -18,7 +18,7 @@ import Vulkan.Extensions.VK_KHR_swapchain as VkSwapChain
 import Vulkan.Extensions.VK_KHR_surface as VkSurface
 import Vulkan.Zero as Vk
 
-import Graphics.Shaders.Initialization.Device.Physical
+import Graphics.Shaders.Internal.Device.Physical
 import Graphics.Shaders.Logger.Class
 
 -- Information about the swap chain.

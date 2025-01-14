@@ -1,4 +1,4 @@
-module Graphics.Shaders.Initialization.Device (
+module Graphics.Shaders.Internal.Device (
   Device(..),
   SwapChain(..),
 
@@ -26,8 +26,8 @@ import Vulkan.Extensions.VK_KHR_surface as VkSurface
 import Vulkan.Zero as Vk
 
 import Graphics.Shaders.Exception
-import Graphics.Shaders.Initialization.Device.Physical
-import Graphics.Shaders.Initialization.Device.SwapChain
+import Graphics.Shaders.Internal.Device.Physical
+import Graphics.Shaders.Internal.Device.SwapChain
 import Graphics.Shaders.Logger.Class
 
 -- A graphics enabled logical device.

@@ -31,16 +31,18 @@ executable bagatelle
       Data.Bits.Extra
       Data.Linear
       Graphics.Shaders
+      Graphics.Shaders.Base
       Graphics.Shaders.Buffer
       Graphics.Shaders.Draw
       Graphics.Shaders.Exception
       Graphics.Shaders.Expr
-      Graphics.Shaders.Initialization.Device
-      Graphics.Shaders.Initialization.Device.Physical
-      Graphics.Shaders.Initialization.Device.SwapChain
-      Graphics.Shaders.Initialization.Instance
-      Graphics.Shaders.Initialization.Sync
-      Graphics.Shaders.Initialization.Window
+      Graphics.Shaders.Internal.Device
+      Graphics.Shaders.Internal.Device.Physical
+      Graphics.Shaders.Internal.Device.SwapChain
+      Graphics.Shaders.Internal.Expr
+      Graphics.Shaders.Internal.Instance
+      Graphics.Shaders.Internal.Sync
+      Graphics.Shaders.Internal.Window
       Graphics.Shaders.Logger.Base
       Graphics.Shaders.Logger.Class
       Graphics.Shaders.Pipeline

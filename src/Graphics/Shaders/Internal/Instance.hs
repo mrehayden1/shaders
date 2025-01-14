@@ -1,4 +1,4 @@
-module Graphics.Shaders.Initialization.Instance (
+module Graphics.Shaders.Internal.Instance (
   withInstance
 ) where
 

@@ -1,4 +1,4 @@
-module Graphics.Shaders.Initialization.Device.Physical (
+module Graphics.Shaders.Internal.Device.Physical (
   PhysicalDevice(..),
   SwapChainSettings(..),
 

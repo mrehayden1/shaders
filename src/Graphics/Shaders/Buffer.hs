@@ -36,7 +36,7 @@ import qualified Vulkan.Zero as Vk
 
 import Data.Bits.Extra
 import Data.Linear
-import Graphics.Shaders
+import Graphics.Shaders.Base
 import Graphics.Shaders.Exception
 import Graphics.Shaders.Logger.Class
 

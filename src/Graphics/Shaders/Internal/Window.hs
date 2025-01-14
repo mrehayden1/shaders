@@ -1,4 +1,4 @@
-module Graphics.Shaders.Initialization.Window (
+module Graphics.Shaders.Internal.Window (
   createWindowSurface
 ) where
 
