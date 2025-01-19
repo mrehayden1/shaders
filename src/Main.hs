@@ -42,9 +42,9 @@ main = do
 
       timeRef <- liftIO $ newIORef =<< getCurrentTime
 
-      vertexBuffer <- withVerticesAsBuffer vertexData
+      vertexBuffer <- withBuffer vertexData
       pipeline <- withPipeline @(V2 Float, V3 Float)
-        $ \(pos, clr) -> (vec4 (x pos) (y pos) 0 1, clr)
+        $ \(pos, clr) -> (vec4 (_x pos) (_y pos) 0 1, clr)
 
       liftIO $ putStrLn "Finished startup."
       liftIO $ putStrLn "Running...\n"

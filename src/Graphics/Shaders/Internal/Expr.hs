@@ -3,11 +3,14 @@ module Graphics.Shaders.Internal.Expr (
   S(..),
 
   execExprM,
-  tellExpr,
+  tellStatement,
 
   vec2,
   vec3,
-  vec4
+  vec4,
+
+  mat3,
+  mat4
 ) where
 
 import Control.Monad.Reader
@@ -24,8 +27,7 @@ newtype S a = S { unS :: ExprM ByteString }
 
 newtype ExprM a = ExprM {
   unExprM :: ReaderT Indent (StateT TempName (Writer ByteString)) a
-} deriving (Functor, Applicative, Monad, MonadReader Indent,
-    MonadState TempName)
+} deriving (Functor, Applicative, Monad, MonadReader Indent)
 
 type Indent = Int
 type TempName = Int
@@ -33,15 +35,15 @@ type TempName = Int
 execExprM :: Int -> ExprM a -> ByteString
 execExprM n = execWriter . flip evalStateT 0 . flip runReaderT n . unExprM
 
-tellExpr :: ByteString -> ExprM ()
-tellExpr s = do
+tellStatement :: ByteString -> ExprM ()
+tellStatement s = do
   pad <- asks $ BS.pack . flip replicate ' '
   ExprM . lift . lift . tell $ pad <> s <> ";\n"
 
 tellAssignment :: ByteString -> ByteString -> ExprM ByteString
 tellAssignment t s = do
-  n <- ("t" <>) . BS.pack . show <$> getNext
-  tellExpr $ t <> " " <> n <> " = " <> s
+  n <- ("t" <>) . BS.pack . show <$> ExprM getNext
+  tellStatement $ t <> " " <> n <> " = " <> s
   return n
 
 bin :: ByteString -> ByteString -> S a -> S a -> S a
@@ -95,6 +97,23 @@ vec4 a b c d = S $ do
   tellAssignment "vec4" $
     "vec4(" <> a' <> ", " <> b' <> ", " <> c' <> ", " <> d' <> ")"
 
+mat3 :: S (V3 a) -> S (V3 a) -> S (V3 a) -> S (M33 a)
+mat3 a b c = S $ do
+  a' <- unS a
+  b' <- unS b
+  c' <- unS c
+  tellAssignment "mat3" $
+    "mat3(" <> a' <> ", " <> b' <> ", " <> c' <> ")"
+
+mat4 :: S (V4 a) -> S (V4 a) -> S (V4 a) -> S (V4 a) -> S (M44 a)
+mat4 a b c d = S $ do
+  a' <- unS a
+  b' <- unS b
+  c' <- unS c
+  d' <- unS d
+  tellAssignment "mat4" $
+    "mat4(" <> a' <> ", " <> b' <> ", " <> c' <> ", " <> d' <> ")"
+
 instance Num (S Float) where
   (+) = bin "float" "+"
   (-) = bin "float" "-"
@@ -129,47 +148,88 @@ instance Floating (S Float) where
   atanh = fun1 "float" "atanh"
   acosh = fun1 "float" "acosh"
 
+
+-- Basis vector accesors
+
 instance R1 (S (V2 a)) (S a) where
-  x (S a) = S $ do
+  _x (S a) = S $ do
     n <- a
     return $ n <> ".x"
 
 instance R1 (S (V3 a)) (S a) where
-  x (S a) = S $ do
+  _x (S a) = S $ do
     n <- a
     return $ n <> ".x"
 
 instance R1 (S (V4 a)) (S a) where
-  x (S a) = S $ do
+  _x (S a) = S $ do
     n <- a
     return $ n <> ".x"
 
+instance R1 (S (M33 a)) (S (V3 a)) where
+  _0 (S a) = S $ do
+    n <- a
+    return $ n <> "[0]"
+
+instance R1 (S (M44 a)) (S (V4 a)) where
+  _0 (S a) = S $ do
+    n <- a
+    return $ n <> "[0]"
+
+
 instance R2 (S (V2 a)) (S a) where
-  y (S a) = S $ do
+  _y (S a) = S $ do
     n <- a
     return $ n <> ".y"
 
 instance R2 (S (V3 a)) (S a) where
-  y (S a) = S $ do
+  _y (S a) = S $ do
     n <- a
     return $ n <> ".y"
 
 instance R2 (S (V4 a)) (S a) where
-  y (S a) = S $ do
+  _y (S a) = S $ do
     n <- a
     return $ n <> ".y"
 
+instance R2 (S (M33 a)) (S (V3 a)) where
+  _1 (S a) = S $ do
+    n <- a
+    return $ n <> "[1]"
+
+instance R2 (S (M44 a)) (S (V4 a)) where
+  _1 (S a) = S $ do
+    n <- a
+    return $ n <> "[1]"
+
+
 instance R3 (S (V3 a)) (S a) where
-  z (S a) = S $ do
+  _z (S a) = S $ do
     n <- a
     return $ n <> ".z"
 
 instance R3 (S (V4 a)) (S a) where
-  z (S a) = S $ do
+  _z (S a) = S $ do
     n <- a
     return $ n <> ".z"
 
+instance R3 (S (M33 a)) (S (V3 a)) where
+  _2 (S a) = S $ do
+    n <- a
+    return $ n <> "[2]"
+
+instance R3 (S (M44 a)) (S (V4 a)) where
+  _2 (S a) = S $ do
+    n <- a
+    return $ n <> "[2]"
+
+
 instance R4 (S (V4 a)) (S a) where
-  w (S a) = S $ do
+  _w (S a) = S $ do
     n <- a
     return $ n <> ".w"
+
+instance R4 (S (M44 a)) (S (V4 a)) where
+  _3 (S a) = S $ do
+    n <- a
+    return $ n <> "[3]"

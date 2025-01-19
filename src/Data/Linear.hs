@@ -3,6 +3,9 @@ module Data.Linear (
   V3(..),
   V4(..),
 
+  M33(..),
+  M44(..),
+
   R1(..),
   R2(..),
   R3(..),
@@ -15,7 +18,7 @@ import Foreign.Storable
 data V2 a = V2 a a
 
 instance Storable a => Storable (V2 a) where
-  alignment _ = 4
+  alignment _ = alignment (undefined :: a)
   peek ptr = do
     a <- peek (castPtr ptr)
     b <- peekByteOff ptr (sizeOf a)
@@ -28,7 +31,7 @@ instance Storable a => Storable (V2 a) where
 data V3 a = V3 a a a
 
 instance Storable a => Storable (V3 a) where
-  alignment _ = 4
+  alignment _ = alignment (undefined :: a)
   peek ptr = do
     let ptr' = castPtr ptr
     a <- peek ptr'
@@ -45,7 +48,7 @@ instance Storable a => Storable (V3 a) where
 data V4 a = V4 a a a a
 
 instance Storable a => Storable (V4 a) where
-  alignment _ = 4
+  alignment _ = alignment (undefined :: a)
   peek ptr = do
     let ptr' = castPtr ptr
     a <- peek ptr'
@@ -62,44 +65,100 @@ instance Storable a => Storable (V4 a) where
   sizeOf _ = 3 * sizeOf (undefined :: a)
 
 
+-- Matrices
+--
+-- All matrices are column major order representation
+
+newtype M33 a = M33 (V3 (V3 a))
+
+instance Storable a => Storable (M33 a) where
+  alignment _ = alignment (undefined :: a)
+  peek ptr = M33 <$> (peek . castPtr $ ptr)
+  poke ptr (M33 v4) = poke (castPtr ptr) v4
+  sizeOf _ = 4 * 4 * sizeOf (undefined :: a)
+
+newtype M44 a = M44 (V4 (V4 a))
+
+instance Storable a => Storable (M44 a) where
+  alignment _ = alignment (undefined :: a)
+  peek ptr = M44 <$> (peek . castPtr $ ptr)
+  poke ptr (M44 v4) = poke (castPtr ptr) v4
+  sizeOf _ = 4 * 4 * sizeOf (undefined :: a)
+
+
+-- Basis vector accesors
+
 class R1 f a where
-  x :: f -> a
+  _x :: f -> a
+  _x = _0
+  _0 :: f -> a
+  _0 = _x
 
 instance R1 (V2 a) a where
-  x (V2 x' _) = x'
+  _x (V2 x _) = x
 
 instance R1 (V3 a) a where
-  x (V3 x' _ _) = x'
+  _x (V3 x _ _) = x
 
 instance R1 (V4 a) a where
-  x (V4 x' _ _ _) = x'
+  _x (V4 x _ _ _) = x
+
+instance R1 (M33 a) (V3 a) where
+  _0 (M33 (V3 x _ _)) = x
+
+instance R1 (M44 a) (V4 a) where
+  _0 (M44 (V4 x _ _ _)) = x
 
 
 class R1 f a => R2 f a where
-  y :: f -> a
+  _y :: f -> a
+  _y = _1
+  _1 :: f -> a
+  _1 = _y
 
 instance R2 (V2 a) a where
-  y (V2 _ a) = a
+  _y (V2 _ y) = y
 
 instance R2 (V3 a) a where
-  y (V3 _ a _) = a
+  _y (V3 _ y _) = y
 
 instance R2 (V4 a) a where
-  y (V4 _ a _ _) = a
+  _y (V4 _ y _ _) = y
+
+instance R2 (M33 a) (V3 a) where
+  _1 (M33 (V3 _ y _)) = y
+
+instance R2 (M44 a) (V4 a) where
+  _1 (M44 (V4 _ y _ _)) = y
 
 
 class R2 f a => R3 f a where
-  z :: f -> a
+  _z :: f -> a
+  _z = _2
+  _2 :: f -> a
+  _2 = _z
 
 instance R3 (V3 a) a where
-  z (V3 _ _ a) = a
+  _z (V3 _ _ z) = z
 
 instance R3 (V4 a) a where
-  z (V4 _ _ a _) = a
+  _z (V4 _ _ z _) = z
+
+instance R3 (M33 a) (V3 a) where
+  _2 (M33 (V3 _ _ z)) = z
+
+instance R3 (M44 a) (V4 a) where
+  _2 (M44 (V4 _ _ z _)) = z
 
 
 class R3 f a => R4 f a where
-  w :: f -> a
+  _w :: f -> a
+  _w = _3
+  _3 :: f -> a
+  _3 = _w
 
 instance R4 (V4 a) a where
-  w (V4 _ _ _ a) = a
+  _w (V4 _ _ _ w) = w
+
+instance R4 (M44 a) (V4 a) where
+  _3 (M44 (V4 _ _ _ w)) = w

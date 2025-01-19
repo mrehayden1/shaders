@@ -1,6 +1,7 @@
 module Graphics.Shaders.Pipeline (
-  S(..),
   Pipeline(..),
+  CompiledPipeline(..),
+  S(..),
 
   withPipeline
 ) where
@@ -37,13 +38,26 @@ import qualified Vulkan.Zero as Vk
 import Control.Monad.State.Extra
 import Data.Linear
 import Graphics.Shaders.Base
-import Graphics.Shaders.Buffer
+import Graphics.Shaders.Internal.Buffer
 import Graphics.Shaders.Internal.Expr
 import Graphics.Shaders.Logger.Class
 
-newtype Pipeline vIn vOut = Pipeline {
+newtype CompiledPipeline vIn vOut = CompiledPipeline {
   pipelineHandle :: Vk.Pipeline
 }
+
+newtype Pipeline e a = Pipeline {
+  unPipeline ::
+    StateT
+      Int -- Binding number
+      (Writer
+        ([ByteString],                   -- GLSL declarations
+         [Vk.DescriptorSetLayoutBinding] -- Descriptor set layouts
+                                         -- TODO Do the binding
+        )
+      )
+      a
+} deriving (Functor, Applicative, Monad)
 
 withPipeline :: forall input output bIn bOut sIn sOut m.
  (MonadAsyncException m, MonadLogger m,
@@ -53,22 +67,23 @@ withPipeline :: forall input output bIn bOut sIn sOut m.
   VertexInput bOut, VertexFormat bOut ~ sOut,
   VertexOutput sOut)
   => (sIn -> (S (V4 Float), sOut))
-  -> ShadersT m (Pipeline input output)
+  -> ShadersT m (CompiledPipeline input output)
 withPipeline vertexShader = do
   deviceHandle <- getDeviceHandle
   renderPass <- getRenderPass
   vertexShaderModule <- createVertexShader @bIn @bOut deviceHandle vertexShader
   fragmentShaderModule <- createFragmentShader deviceHandle
 
-  let ToBuffer (Kleisli calcStride) _ = toBuffer
-      (b, stride) = flip runState 0 . calcStride $ (undefined :: input)
+  let ToBuffer (Kleisli calcStride) _ align = toBuffer
+      ((b, _), stride) = flip runState 0 . runWriterT . flip runReaderT align
+                           . calcStride $ (undefined :: input)
 
   let ToVertex (Kleisli buildVertexAttrDescrs) _
         = toVertex :: ToVertex (BufferFormat input)
                                (VertexFormat (BufferFormat input))
 
   let (vertexAttrDescrs, _) = flip runState (0, 0) . execWriterT
-        . buildVertexAttrDescrs $ b
+                                . buildVertexAttrDescrs $ b
 
   debug "Creating pipeline layout."
   layout <- fromCps $ bracket
@@ -150,7 +165,7 @@ withPipeline vertexShader = do
       VkPipeline.destroyPipeline deviceHandle p Nothing
     )
 
-  return $ Pipeline vkPipeline
+  return $ CompiledPipeline vkPipeline
 
 createVertexShader :: forall bIn bOut sIn sOut m. (
     MonadAsyncException m,
@@ -182,7 +197,7 @@ createVertexShader device shaderFn = do
         <> execExprM 2 (do
                _ <- unS body
                n <- unS glPos
-               tellExpr $ "gl_Position = " <> n
+               tellStatement $ "gl_Position = " <> n
                return undefined
              )
         <> "}"
@@ -280,7 +295,7 @@ instance VertexInput (B Float) where
          VkAttrs.location = i,
          VkAttrs.offset = off
        }]
-       let off' = off + fromIntegral bStride
+       let off' = off + fromIntegral bOffset
            i'   = i + 1
        put (off', i')
        return undefined
@@ -294,7 +309,7 @@ instance VertexInput (B (V2 Float)) where
   toVertex = ToVertex
     (Kleisli $ \B{..} -> do
        (offset, loc) <- update $
-         \(o, l) -> (o + fromIntegral bStride, l + 1)
+         \(o, l) -> (o + fromIntegral bOffset, l + 1)
        tell [Vk.zero {
          VkAttrs.binding = 0,
          VkAttrs.format = Vk.FORMAT_R32G32_SFLOAT,
@@ -312,7 +327,7 @@ instance VertexInput (B (V3 Float)) where
   toVertex = ToVertex
     (Kleisli $ \B{..} -> do
        (offset, loc) <- update $
-         \(o, l) -> (o + fromIntegral bStride, l + 1)
+         \(o, l) -> (o + fromIntegral bOffset, l + 1)
        tell [Vk.zero {
          VkAttrs.binding = 0,
          VkAttrs.format = Vk.FORMAT_R32G32B32_SFLOAT,
@@ -354,7 +369,7 @@ instance VertexOutput (S Float) where
       n <- tellDecl "float"
       return . S $ do
         a' <- unS a
-        tellExpr $ n <> " = " <> a'
+        tellStatement $ n <> " = " <> a'
         return ""
     )
 
@@ -364,7 +379,7 @@ instance VertexOutput (S (V3 Float)) where
       n <- tellDecl "vec3"
       return . S $ do
         a' <- unS a
-        tellExpr $ n <> " = " <> a'
+        tellStatement $ n <> " = " <> a'
         return ""
     )
 

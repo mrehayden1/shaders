@@ -48,7 +48,6 @@ framesInFlight :: Int
 framesInFlight = 2
 
 newtype ShadersT m a = ShadersT {
-
   unShadersT :: ReaderT GraphicsEnv (StateT DrawState (Codensity m)) a
 } deriving (Functor, Applicative, Monad, MonadIO)
 
@@ -58,9 +57,9 @@ data GraphicsEnv = GraphicsEnv {
 }
 
 data Frame = Frame {
-    frameCommandBuffer :: Vk.CommandBuffer,
-    frameSyncObjects :: SyncObjects
-  }
+  frameCommandBuffer :: Vk.CommandBuffer,
+  frameSyncObjects :: SyncObjects
+}
 
 data DrawState = DrawState {
   drawStateFrameIndex :: Int,

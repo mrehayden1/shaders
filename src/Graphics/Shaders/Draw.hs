@@ -20,15 +20,15 @@ import Vulkan.Zero as Vk
 
 import Data.Linear
 import Graphics.Shaders.Base
-import Graphics.Shaders.Buffer
+import Graphics.Shaders.Internal.Buffer
 import Graphics.Shaders.Logger.Class
 import Graphics.Shaders.Pipeline
 
 drawFrame :: (MonadIO m, MonadLogger m)
-  => Pipeline a (V3 Float)
-  -> VertexBuffer (BufferFormat a)
+  => CompiledPipeline a (V3 Float)
+  -> Buffer (BufferFormat a)
   -> ShadersT m ()
-drawFrame Pipeline{..} vertexBuffer = do
+drawFrame CompiledPipeline{..} vertexBuffer = do
   Frame{..} <- getCurrentFrame
   queueHandle <- getQueueHandle
   let SyncObjects{..} = frameSyncObjects
@@ -57,9 +57,9 @@ drawFrame Pipeline{..} vertexBuffer = do
   recordCommandBuffer :: MonadIO m
     => Vk.CommandBuffer
     -> Vk.Framebuffer
-    -> VertexBuffer a
+    -> Buffer a
     -> ShadersT m ()
-  recordCommandBuffer commandBuffer framebuffer VertexBuffer{..} =
+  recordCommandBuffer commandBuffer framebuffer Buffer{..} =
     -- Use Codensity to bracket command buffer recording and render pass.
     flip runCodensity return $ do
       extent <- lift getExtent
@@ -94,6 +94,6 @@ drawFrame Pipeline{..} vertexBuffer = do
       VkCmd.cmdSetScissor commandBuffer 0 . V.singleton $ scissor
 
       VkCmd.cmdBindVertexBuffers commandBuffer 0
-        (V.singleton vertexBufferHandle) (V.singleton 0)
+        (V.singleton bufferHandle) (V.singleton 0)
 
-      VkCmd.cmdDraw commandBuffer vertexBufferNumVertices 1 0 0
+      VkCmd.cmdDraw commandBuffer bufferNumVertices 1 0 0

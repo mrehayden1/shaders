@@ -36,6 +36,7 @@ executable bagatelle
       Graphics.Shaders.Draw
       Graphics.Shaders.Exception
       Graphics.Shaders.Expr
+      Graphics.Shaders.Internal.Buffer
       Graphics.Shaders.Internal.Device
       Graphics.Shaders.Internal.Device.Physical
       Graphics.Shaders.Internal.Device.SwapChain
@@ -47,6 +48,7 @@ executable bagatelle
       Graphics.Shaders.Logger.Class
       Graphics.Shaders.Pipeline
       Graphics.Shaders.Shader
+      Graphics.Shaders.Uniform
       Window
       Paths_bagatelle
   hs-source-dirs:
