@@ -33,7 +33,6 @@ executable bagatelle
       Graphics.Shaders
       Graphics.Shaders.Base
       Graphics.Shaders.Buffer
-      Graphics.Shaders.Draw
       Graphics.Shaders.Exception
       Graphics.Shaders.Expr
       Graphics.Shaders.Internal.Buffer
@@ -42,6 +41,7 @@ executable bagatelle
       Graphics.Shaders.Internal.Device.SwapChain
       Graphics.Shaders.Internal.Expr
       Graphics.Shaders.Internal.Instance
+      Graphics.Shaders.Internal.Pipeline
       Graphics.Shaders.Internal.Sync
       Graphics.Shaders.Internal.Window
       Graphics.Shaders.Logger.Base
@@ -57,6 +57,7 @@ executable bagatelle
       AllowAmbiguousTypes
       Arrows
       DataKinds
+      ExistentialQuantification
       FlexibleContexts
       FlexibleInstances
       GeneralizedNewtypeDeriving
@@ -74,6 +75,7 @@ executable bagatelle
       GLFW-b
     , base >=4.7 && <5
     , bytestring
+    , containers
     , data-default
     , exception-transformers
     , kan-extensions

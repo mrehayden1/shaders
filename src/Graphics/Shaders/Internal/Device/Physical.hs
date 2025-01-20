@@ -147,7 +147,7 @@ getSwapChainSupport device window surface = do
   surfaceCapabilities <- VkSurface.getPhysicalDeviceSurfaceCapabilitiesKHR
                            device
                            surface
-  trace . show $ surfaceCapabilities
+  logTrace . show $ surfaceCapabilities
 
   -- Calculate the swap image extent.
   debug "Calculating swap image extent."
@@ -194,7 +194,7 @@ getSwapChainSupport device window surface = do
                               surface
   when (res0 == Vk.INCOMPLETE) $
     warn "Vulkan API returned incomplete surface formats list."
-  trace . show $ surfaceFormats
+  logTrace . show $ surfaceFormats
   let surfaceFormat = VkSurface.SurfaceFormatKHR {
                           VkSurface.colorSpace =
                             VkSurface.COLOR_SPACE_SRGB_NONLINEAR_KHR,
@@ -215,7 +215,7 @@ getSwapChainSupport device window surface = do
                             surface
   when (res1 == Vk.INCOMPLETE) $
     warn "Vulkan API returned incomplete present modes list."
-  trace . show $ presentModes
+  logTrace . show $ presentModes
   let presentMode = VkSurface.PRESENT_MODE_IMMEDIATE_KHR
       hasPresentMode = presentMode `elem` presentModes
   unless hasPresentMode $ do

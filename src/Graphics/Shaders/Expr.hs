@@ -1,6 +1,9 @@
 module Graphics.Shaders.Expr (
   S,
 
+  V,
+  F,
+
   vec2,
   vec3,
   vec4

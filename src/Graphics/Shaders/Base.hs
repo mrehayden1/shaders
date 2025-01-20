@@ -1,5 +1,7 @@
 module Graphics.Shaders.Base (
-  ShadersT,
+  ShadersT(..),
+  GraphicsEnv(..),
+  DrawState(..),
   runShadersT,
   fromCps,
 
@@ -172,7 +174,7 @@ swap = do
   let SyncObjects{..} = frameSyncObjects
   (currentImageIndex, _) <- getCurrentSwapChainImage
 
-  trace "Waiting for GPU to render current frame"
+  logTrace "Waiting for GPU to render current frame"
   -- Wait for the GPU to finish rendering the last frame.
   -- Ignore TIMEOUT since we're waiting so long anyway.
   let fences = V.singleton syncInFlightFence
@@ -185,7 +187,7 @@ swap = do
     VkSwap.swapchains = V.singleton swapChainHandle,
     VkSwap.waitSemaphores = V.singleton syncRenderFinishedSemaphore
   }
-  trace "Presenting image"
+  logTrace "Presenting image"
   _ <- VkSwap.queuePresentKHR deviceQueueHandle presentInfo
 
   -- Increment the frame and swap chain image

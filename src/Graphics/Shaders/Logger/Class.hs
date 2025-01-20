@@ -2,7 +2,7 @@ module Graphics.Shaders.Logger.Class (
   MonadLogger(..),
   LogLevel(..),
 
-  trace,
+  logTrace,
   debug,
   info,
   warn,
@@ -20,8 +20,8 @@ class MonadLogger m where
 data LogLevel = LogTrace | LogDebug | LogInfo | LogWarn | LogError | LogNone
  deriving (Eq, Ord, Show)
 
-trace :: MonadLogger m => String -> m ()
-trace = loggerLog LogTrace
+logTrace :: MonadLogger m => String -> m ()
+logTrace = loggerLog LogTrace
 
 debug :: MonadLogger m => String -> m ()
 debug = loggerLog LogDebug

@@ -21,5 +21,5 @@ update' f = do
   modify' f
   return s
 
-getNext :: (MonadState s m, Num s) => m s
-getNext = update (+ 1)
+getNext :: (MonadState s m, Enum s) => m s
+getNext = update succ
