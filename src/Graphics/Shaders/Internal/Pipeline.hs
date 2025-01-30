@@ -475,52 +475,50 @@ runPipeline e CompiledPipeline{..} = do
     -> PrimitiveArrayGetter e
     -> ShadersT m ()
   recordCommandBuffer commandBuffer framebuffer pipelineHandle descriptorSet
-    primitiveArrayGetter = do
+    primitiveArrayGetter = flip runCodensity return $ do
     -- Use Codensity to bracket command buffer recording and render pass.
-    flip runCodensity return $ do
-      extent <- lift getExtent
-      renderPass <- lift getRenderPass
-      Codensity $ VkCmd.useCommandBuffer commandBuffer Vk.zero . (&) ()
-      let renderPassBeginInfo = Vk.zero {
-        VkCmd.clearValues = V.fromList [
-          VkCmd.Color (VkCmd.Float32 0 0 0 1)
-        ],
-        VkCmd.framebuffer = framebuffer,
-        VkCmd.renderArea = Vk.zero {
-          VkRect2D.extent = extent
-        },
-        VkCmd.renderPass = renderPass
-      }
-      Codensity $
-        VkCmd.cmdUseRenderPass commandBuffer renderPassBeginInfo
-          VkCmd.SUBPASS_CONTENTS_INLINE . (&) ()
-      lift $ VkCmd.cmdBindPipeline commandBuffer
-               VkEnum.PIPELINE_BIND_POINT_GRAPHICS
-               pipelineHandle
-
-      let viewport = Vk.zero {
-        VkPipeline.height = fromIntegral . VkExtent2D.height $ extent,
-        VkPipeline.width = fromIntegral . VkExtent2D.width $ extent,
-        VkPipeline.maxDepth = 1
-      }
-      VkCmd.cmdSetViewport commandBuffer 0 . V.singleton $ viewport
-
-      let scissor = Vk.zero {
+    extent <- lift getExtent
+    renderPass <- lift getRenderPass
+    Codensity $ VkCmd.useCommandBuffer commandBuffer Vk.zero . (&) ()
+    let renderPassBeginInfo = Vk.zero {
+      VkCmd.clearValues = V.fromList [
+        VkCmd.Color (VkCmd.Float32 0 0 0 1)
+      ],
+      VkCmd.framebuffer = framebuffer,
+      VkCmd.renderArea = Vk.zero {
         VkRect2D.extent = extent
-      }
-      VkCmd.cmdSetScissor commandBuffer 0 . V.singleton $ scissor
+      },
+      VkCmd.renderPass = renderPass
+    }
+    Codensity $
+      VkCmd.cmdUseRenderPass commandBuffer renderPassBeginInfo
+        VkCmd.SUBPASS_CONTENTS_INLINE . (&) ()
+    lift $ VkCmd.cmdBindPipeline commandBuffer
+             VkEnum.PIPELINE_BIND_POINT_GRAPHICS
+             pipelineHandle
 
-      VkCmd.cmdBindDescriptorSets commandBuffer
-        VkEnum.PIPELINE_BIND_POINT_GRAPHICS
-        compiledPipelineLayout
-        0
-        (V.singleton descriptorSet)
-        V.empty
+    let viewport = Vk.zero {
+      VkPipeline.height = fromIntegral . VkExtent2D.height $ extent,
+      VkPipeline.width = fromIntegral . VkExtent2D.width $ extent,
+      VkPipeline.maxDepth = 1
+    }
+    VkCmd.cmdSetViewport commandBuffer 0 . V.singleton $ viewport
 
-      -- Begin draw calls
-      withPrimitiveArray primitiveArrayGetter e $ \pa ->
-        forM_ (unPrimitiveArray pa) $
-          \PrimitiveArrayDrawCall{..} -> do
+    let scissor = Vk.zero {
+      VkRect2D.extent = extent
+    }
+    VkCmd.cmdSetScissor commandBuffer 0 . V.singleton $ scissor
+
+    VkCmd.cmdBindDescriptorSets commandBuffer
+      VkEnum.PIPELINE_BIND_POINT_GRAPHICS
+      compiledPipelineLayout
+      0
+      (V.singleton descriptorSet)
+      V.empty
+
+    -- Begin draw calls
+    withPrimitiveArray primitiveArrayGetter e $ \pa ->
+      forM_ (unPrimitiveArray pa) $ \PrimitiveArrayDrawCall{..} -> do
 
         let vertexBuffer = primitiveArrayVertices
             vertexStart = primitiveArrayStart

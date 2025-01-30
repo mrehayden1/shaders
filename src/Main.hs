@@ -26,7 +26,7 @@ appLoggingLevel :: LogLevel
 appLoggingLevel = LogTrace
 
 data ShaderEnv = ShaderEnv {
-  envVertices :: PrimitiveArray Triangles (B (V2 Float), B (V3 Float)) (B (V2 Float)),
+  envVertices :: PrimitiveArray Triangles (B (V2 Float), B (V3 Float)) (B (V2 Float), B Float),
   envColor :: Buffer (Uniform (B (V3 Float))),
   envMatrix :: Buffer (Uniform (B (M44 Float))),
   envOpacity :: Buffer (Uniform (B Float))
@@ -69,18 +69,17 @@ main = do
       quadIndexBuffer :: Buffer (B Word32) <- withBuffer quadIndices
       let quadIndexArray = toIndexArray quadIndexBuffer
 
-      let translationInstances = [
-              V2 0.0 0.0,
-              V2 0.1 0.1,
-              V2 0.2 0.2,
-              V2 0.3 0.3,
-              V2 0.4 0.4
-            ]
-      translationVertexArray <-
-        toVertexArray <$> withBuffer translationInstances
+      let quadInstances = [0..(100 - 1)] <&> \n ->
+            (
+              V2 (fromIntegral (n `mod` 10) * 0.2 - 1)
+                 (fromIntegral (n `div` 10) * 0.2 - 1),
+              0.1
+            )
+      quadInstanceVertexArray <-
+        toVertexArray <$> withBuffer quadInstances
 
-      let quadPrimitives = toPrimitiveArrayIndexedInstanced TriangleStrip
-            quadIndexArray quadVertexArray translationVertexArray
+      let quadPrimitives = toPrimitiveArrayIndexedInstanced TriangleList
+            quadIndexArray quadVertexArray quadInstanceVertexArray
 
       let matrixData = [
               M44
@@ -102,12 +101,12 @@ main = do
         <*> withBuffer opacityData
 
       pipeline <- compilePipeline $ do
-        vertices <- toPrimitiveStream envVertices $ \(pos, color) t
-          -> (pos, color, t)
+        vertices <- toPrimitiveStream envVertices $ \(pos, color) (t, s)
+          -> (pos, color, t, s)
         red :: (S V (V3 Float)) <- getUniform envColor
         matrix :: (S V (M44 Float)) <- getUniform envMatrix
-        let vertices' = vertices <&> \(pos, color, t) ->
-              let glPos = vec4 (_x pos + _x t) (_y pos + _y t) 0 1
+        let vertices' = vertices <&> \(pos, color, t, s) ->
+              let glPos = vec4 (_x pos * s + _x t) (_y pos * s + _y t) 0 1
               in (glPos, color)
         opacity :: (S F Float) <- getUniform envOpacity
         fragments <- rasterize vertices'
