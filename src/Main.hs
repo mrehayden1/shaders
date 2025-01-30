@@ -4,8 +4,10 @@ module Main (
 
 import Control.Monad.Codensity
 import Control.Monad.Reader
+import Data.Functor
 import Data.IORef
 import Data.Time.Clock
+import Data.Word
 import Text.Printf
 
 import Data.Linear
@@ -24,7 +26,7 @@ appLoggingLevel :: LogLevel
 appLoggingLevel = LogTrace
 
 data ShaderEnv = ShaderEnv {
-  envVertices :: Buffer (B (V2 Float), B (V3 Float)),
+  envVertices :: PrimitiveArray Triangles (B (V2 Float), B (V3 Float)) (B (V2 Float)),
   envColor :: Buffer (Uniform (B (V3 Float))),
   envMatrix :: Buffer (Uniform (B (M44 Float))),
   envOpacity :: Buffer (Uniform (B Float))
@@ -44,13 +46,43 @@ main = do
 
       timeRef <- liftIO $ newIORef =<< getCurrentTime
 
-      let vertexData = [
+      let triangleVertices = [
               (V2   0.0  (-0.5), V3 1.0 0.0 0.0),
               (V2 (-0.5)   0.5 , V3 0.0 0.0 1.0),
               (V2   0.5    0.5 , V3 0.0 1.0 0.0)
             ]
 
-          matrixData = [
+      triangleBuffer :: Buffer (B (V2 Float), B (V3 Float)) <-
+        withBuffer triangleVertices
+      let triangleVertexArray = toVertexArray triangleBuffer
+          trianglePrimitives = toPrimitiveArray TriangleList triangleVertexArray
+
+      let quadVertices = [
+              (V2 (-0.5) (-0.5), V3 1.0 0.0 0.0),
+              (V2 (-0.5)   0.5 , V3 1.0 1.0 1.0),
+              (V2   0.5  (-0.5), V3 0.0 0.0 1.0),
+              (V2   0.5    0.5 , V3 0.0 1.0 0.0)
+            ]
+      quadVertexArray <- toVertexArray <$> withBuffer quadVertices
+
+      let quadIndices = [ 0, 1, 2, 1, 3, 2 ] :: [Word32]
+      quadIndexBuffer :: Buffer (B Word32) <- withBuffer quadIndices
+      let quadIndexArray = toIndexArray quadIndexBuffer
+
+      let translationInstances = [
+              V2 0.0 0.0,
+              V2 0.1 0.1,
+              V2 0.2 0.2,
+              V2 0.3 0.3,
+              V2 0.4 0.4
+            ]
+      translationVertexArray <-
+        toVertexArray <$> withBuffer translationInstances
+
+      let quadPrimitives = toPrimitiveArrayIndexedInstanced TriangleStrip
+            quadIndexArray quadVertexArray translationVertexArray
+
+      let matrixData = [
               M44
                 (V4 1   0   0   0  )
                 (V4 0   1   0   0  )
@@ -64,22 +96,22 @@ main = do
 
           opacityData = [ 0.5 ]
 
-      shaderEnv <- ShaderEnv
-        <$> withBuffer vertexData
-        <*> withBuffer redData
+      shaderEnv <- ShaderEnv (quadPrimitives <> trianglePrimitives)
+        <$> withBuffer redData
         <*> withBuffer matrixData
         <*> withBuffer opacityData
 
       pipeline <- compilePipeline $ do
-        vertices <- toVertexStream envVertices
+        vertices <- toPrimitiveStream envVertices $ \(pos, color) t
+          -> (pos, color, t)
         red :: (S V (V3 Float)) <- getUniform envColor
         matrix :: (S V (M44 Float)) <- getUniform envMatrix
-        let vertices' = flip fmap vertices $ \(pos, color) ->
-              let glPos = vec4 (_x pos) (_y pos) 0 1
-              in (glPos, red)
+        let vertices' = vertices <&> \(pos, color, t) ->
+              let glPos = vec4 (_x pos + _x t) (_y pos + _y t) 0 1
+              in (glPos, color)
         opacity :: (S F Float) <- getUniform envOpacity
         fragments <- rasterize vertices'
-        return . flip fmap fragments $ \clr ->
+        return $ fragments <&> \clr ->
           vec4 (_r clr) (_g clr) (_b clr) opacity
 
       liftIO $ putStrLn "Finished startup."

@@ -5,13 +5,13 @@ module Graphics.Shaders.Internal.Pipeline (
   UniformBinding(..),
   BufferGetter(..),
 
-  VertexStream,
+  PrimitiveStream,
   FragmentStream,
 
   compilePipeline,
   runPipeline,
 
-  toVertexStream,
+  toPrimitiveStream,
   rasterize
 ) where
 
@@ -32,7 +32,6 @@ import Data.Default
 import Data.Function hiding ((.), id)
 import Data.Map (Map)
 import qualified Data.Map as M
-import Data.Word
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import qualified Language.SpirV.Internal as SpirV
@@ -52,8 +51,6 @@ import qualified Vulkan.Core10.DescriptorSet as VkDSWrite (
 import qualified Vulkan.Core10.Device as VkDevice
 import qualified Vulkan.Core10.Enums as VkEnum
 import qualified Vulkan.Core10.Handles as Vk
-import qualified Vulkan.Core10.Pipeline as VkAttrs (
-  VertexInputAttributeDescription(..))
 import qualified Vulkan.Core10.Pipeline as VkBinding (
   VertexInputBindingDescription(..))
 import qualified Vulkan.Core10.Pipeline as VkPipeline hiding (
@@ -63,6 +60,7 @@ import qualified Vulkan.Core10.Queue as VkQueue
 import qualified Vulkan.Core10.FundamentalTypes as VkExtent2D (Extent2D(..))
 import qualified Vulkan.Core10.FundamentalTypes as VkRect2D (Rect2D(..))
 import qualified Vulkan.Core10.Shader as VkShader
+import qualified Vulkan.Core13.Promoted_From_VK_EXT_extended_dynamic_state as VkCmd
 import Vulkan.CStruct.Extends (SomeStruct(..))
 import qualified Vulkan.Zero as Vk
 
@@ -70,21 +68,23 @@ import Control.Monad.State.Extra
 import Data.Linear
 import Graphics.Shaders.Base
 import Graphics.Shaders.Internal.Buffer
+import Graphics.Shaders.Internal.DeclM
 import Graphics.Shaders.Internal.Expr
+import Graphics.Shaders.Internal.FragmentStream
+import Graphics.Shaders.Internal.PrimitiveArray
+import Graphics.Shaders.Internal.PrimitiveStream
 import Graphics.Shaders.Logger.Class
-
-type GLPos = S V (V4 Float)
 
 data CompiledPipeline e = CompiledPipeline {
   compiledPipeline :: VkPipeline.Pipeline,
   compiledPipelineDescriptorSets :: Vector VkDescr.DescriptorSet,
   compiledPipelineLayout :: Vk.PipelineLayout,
   compiledPipelineUniformInput :: [(Int, BufferGetter e)],
-  compiledPipelineVertexInput :: BufferGetter e
+  compiledPipelinePrimitiveArray :: PrimitiveArrayGetter e
 }
 
 -- Pipeline Monad
-newtype Pipeline e a = Pipeline {
+newtype Pipeline t e a = Pipeline {
   unPipeline ::
     StateT
     (PipelineS e)
@@ -103,9 +103,9 @@ type PipelineS e = (
 
 data VertexBinding e = VertexBinding {
   vertexAttributeDescriptions :: [VkPipeline.VertexInputAttributeDescription],
-  vertexBufferGetter :: BufferGetter e,
+  vertexBindingInputDescription :: [VkPipeline.VertexInputBindingDescription],
   vertexInputDeclarations :: ByteString,
-  vertexStride :: Int
+  vertexPrimitiveArrayGetter :: PrimitiveArrayGetter e
 }
 
 data UniformBinding e = UniformBinding {
@@ -115,66 +115,83 @@ data UniformBinding e = UniformBinding {
   uniformDescrSetLayoutBinding :: VkDescr.DescriptorSetLayoutBinding
 }
 
-tellVertexInput :: VertexBinding e -> Pipeline e Int
+tellVertexInput :: VertexBinding e -> Pipeline t e Int
 tellVertexInput i = do
   (n', _, _, _) <- Pipeline . update $
     \(n, ub, ins, ug) -> (n + 1, ub, M.insert n i ins, ug)
   return n'
 
-data BufferGetter e = forall b. BufferGetter (e -> Buffer b)
+data BufferGetter e = forall a. BufferGetter (e -> Buffer a)
 
-withBufferGetter :: (forall b. Buffer b -> r) -> BufferGetter e -> e -> r
-withBufferGetter f (BufferGetter getBuffer) e = f $ getBuffer e
+withBufferGetter :: BufferGetter e -> e -> (forall a. Buffer a -> r) -> r
+withBufferGetter (BufferGetter getter) e f = f $ getter e
 
+data PrimitiveArrayGetter e =
+  forall a b t. PrimitiveArrayGetter (e -> PrimitiveArray t a b)
 
-data VertexStream a =
-  VertexStream
-    Int -- Input name
-    a   -- An S V x, representing our vertices and encoding the shader.
+withPrimitiveArray :: PrimitiveArrayGetter e
+  -> e
+  -> (forall t a b. PrimitiveArray t a b -> r)
+  -> r
+withPrimitiveArray (PrimitiveArrayGetter getter) e f = f $ getter e
 
-instance Functor VertexStream where
-  fmap f (VertexStream n a) = VertexStream n (f a)
+vertexBufferBindingNumber :: Num a => a
+vertexBufferBindingNumber = 0
 
-toVertexStream :: forall e a. (BufferFormat a, VertexInput a)
-  => (e -> Buffer a)
-  -> Pipeline e (VertexStream (VertexFormat a))
-toVertexStream getBuffer = do
-  let ToBuffer (Kleisli calcStride) _ alignMode
-        = toBuffer :: ToBuffer (HostFormat a) a
-      ((bIn, _), stride) = flip runState 0 . runWriterT
-        . flip runReaderT alignMode . calcStride $ (undefined :: HostFormat a)
+instanceBufferBindingNumber :: Num a => a
+instanceBufferBindingNumber = 1
 
-  let ToVertex (Kleisli buildDescrs) (Kleisli buildInDecls) =
-        toVertex :: ToVertex a (VertexFormat a)
-      (vIn, vInputDecls) = runWriter . flip evalStateT 0 . flip runReaderT In
-                             . buildInDecls $ bIn
-      (_, vInDescrs) = flip evalState (0, 0) . runWriterT . buildDescrs
-                         $ bIn
+toPrimitiveStream :: forall e t a b c. (BufferFormat a, BufferFormat b,
+    VertexInput c)
+  => (e -> PrimitiveArray t a b)
+  -> (a -> b -> c)
+  -> Pipeline t e (PrimitiveStream t (VertexFormat c))
+toPrimitiveStream getPrimitiveArray f = do
+  let (vB, vBindDescr) =
+        makeVertexBinding @a vertexBufferBindingNumber
+          VkEnum.VERTEX_INPUT_RATE_VERTEX
 
-  inName <- tellVertexInput $
-    VertexBinding vInDescrs (BufferGetter getBuffer) vInputDecls stride
-  return $ VertexStream inName vIn
+      (iB, iBindDescr) =
+        makeVertexBinding @b instanceBufferBindingNumber
+          VkEnum.VERTEX_INPUT_RATE_INSTANCE
 
+      ToVertex (Kleisli buildDescrs) (Kleisli buildInDecls) =
+        toVertex :: ToVertex c (VertexFormat c)
+      (aIn, inDecls) = runWriter . flip evalStateT 0 . flip runReaderT In
+                         . buildInDecls $ f vB iB
+      (_, inDescrs) = flip evalState 0 . runWriterT . buildDescrs . f vB $ iB
 
-data FragmentStream a =
-  FragmentStream
-    a             -- Usually an S F x, our fragments.
-    Rasterization -- Rasterization
+      binding = VertexBinding inDescrs [vBindDescr, iBindDescr] inDecls
+        (PrimitiveArrayGetter getPrimitiveArray)
 
-instance Functor FragmentStream where
-  fmap f (FragmentStream a r) = FragmentStream (f a) r
+  inName <- tellVertexInput binding
+  return $ PrimitiveStream inName aIn
+ where
+  makeVertexBinding :: forall d. (BufferFormat d)
+    => Int
+    -> VkEnum.VertexInputRate
+    -> (d,
+        VkPipeline.VertexInputBindingDescription
+       )
+  makeVertexBinding binding inputRate =
+    let ToBuffer (Kleisli calcAlign) _ (Kleisli valueProd) vAlignMode =
+          toBuffer :: ToBuffer (HostFormat d) d
+        ((_, pads), stride) = flip runState 0 . runWriterT
+          . flip runReaderT vAlignMode . calcAlign $ undefined
+        b = flip evalState (pads, 0) . flip runReaderT binding . valueProd
+              $ undefined
 
-data Rasterization = Rasterization
-  Int        -- Input name
-  (S V ())   -- Vertex shader body
-  GLPos
-  ByteString -- Vertex shader output declarations
-  ByteString -- Fragment input declarations
+        bindDescrs = Vk.zero {
+          VkBinding.binding = fromIntegral binding,
+          VkBinding.inputRate = inputRate,
+          VkBinding.stride = fromIntegral stride
+        }
+    in (b, bindDescrs)
 
-rasterize :: forall e a. FragmentInput a
-  => VertexStream (GLPos, a)
-  -> Pipeline e (FragmentStream (FragmentFormat a))
-rasterize (VertexStream inName (glPos, vOut)) = do
+rasterize :: forall a e t. FragmentInput a
+  => PrimitiveStream t (GLPos, a)
+  -> Pipeline t e (FragmentStream (FragmentFormat a))
+rasterize (PrimitiveStream inName (glPos, vOut)) = do
   let ToFragment (Kleisli buildOutput) =
         toFragment :: ToFragment a (FragmentFormat a)
 
@@ -190,8 +207,9 @@ rasterize (VertexStream inName (glPos, vOut)) = do
 
   return $ FragmentStream fIn raster
 
-compilePipeline :: (MonadAsyncException m, MonadLogger m)
-  => Pipeline e (FragmentStream (S F (V4 Float)))
+compilePipeline :: forall e m t. (MonadAsyncException m, MonadLogger m,
+  BaseTopology t)
+  => Pipeline t e (FragmentStream (S F (V4 Float)))
   -> ShadersT m (CompiledPipeline e)
 compilePipeline pipeline = do
   framesInFlight <- ShadersT . asks $ V.length . graphicsFrames
@@ -296,12 +314,13 @@ compilePipeline pipeline = do
     },
     VkPipeline.dynamicState = Just $ Vk.zero {
       VkPipeline.dynamicStates = V.fromList [
-        VkPipeline.DYNAMIC_STATE_VIEWPORT,
-        VkPipeline.DYNAMIC_STATE_SCISSOR
+        VkPipeline.DYNAMIC_STATE_PRIMITIVE_TOPOLOGY,
+        VkPipeline.DYNAMIC_STATE_SCISSOR,
+        VkPipeline.DYNAMIC_STATE_VIEWPORT
       ]
     },
     VkPipeline.inputAssemblyState = Just $ Vk.zero {
-      VkPipeline.topology = VkPipeline.PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
+      VkPipeline.topology = baseTopology (undefined :: t)
     },
     VkPipeline.layout = layout,
     VkPipeline.multisampleState = Just . SomeStruct $ Vk.zero {
@@ -316,11 +335,8 @@ compilePipeline pipeline = do
     VkPipeline.vertexInputState = Just . SomeStruct $ Vk.zero {
       VkPipeline.vertexAttributeDescriptions = V.fromList
         vertexAttributeDescriptions,
-      VkPipeline.vertexBindingDescriptions = V.singleton $ Vk.zero {
-        VkBinding.binding = 0,
-        VkBinding.inputRate = VkEnum.VERTEX_INPUT_RATE_VERTEX,
-        VkBinding.stride = fromIntegral vertexStride
-      }
+      VkPipeline.vertexBindingDescriptions =
+        V.fromList vertexBindingInputDescription
     },
     VkPipeline.viewportState = Just . SomeStruct $ Vk.zero {
       VkPipeline.scissorCount = 1,
@@ -361,11 +377,10 @@ compilePipeline pipeline = do
     compiledPipelineLayout = layout,
     compiledPipelineUniformInput = M.elems . flip fmap uniforms $
       (,) <$> uniformBindingNumber <*> uniformBufferGetter,
-    compiledPipelineVertexInput = vertexBufferGetter
+    compiledPipelinePrimitiveArray = vertexPrimitiveArrayGetter
   }
  where
-  createVertexShader :: (MonadAsyncException m, MonadLogger m)
-    => VkDevice.Device
+  createVertexShader :: VkDevice.Device
     -> ByteString
     -> ShadersT m VkShader.ShaderModule
   createVertexShader device code = do
@@ -374,8 +389,8 @@ compilePipeline pipeline = do
     (SpirV.S compiledCode :: SpirV.S 'SpirV.VertexShader) <-
       liftIO $ SpirV.compile code "<filename>" "main" (def :: SpirV.C ())
     let createInfo = Vk.zero {
-          VkShader.code = compiledCode
-        }
+      VkShader.code = compiledCode
+    }
     debug "Creating vertex shader module."
     fromCps $ bracket
       (VkShader.createShaderModule device createInfo Nothing)
@@ -384,8 +399,7 @@ compilePipeline pipeline = do
         VkShader.destroyShaderModule device s Nothing
       )
 
-  createFragmentShader :: (MonadAsyncException m, MonadLogger m)
-    => VkDevice.Device
+  createFragmentShader :: VkDevice.Device
     -> ByteString
     -> ShadersT m VkShader.ShaderModule
   createFragmentShader device code = do
@@ -394,8 +408,8 @@ compilePipeline pipeline = do
     (SpirV.S compiledCode :: SpirV.S 'SpirV.FragmentShader) <-
       liftIO $ SpirV.compile code "<filename>" "main" (def :: SpirV.C ())
     let createInfo = Vk.zero {
-          VkShader.code = compiledCode
-        }
+      VkShader.code = compiledCode
+    }
     debug "Creating fragment shader module."
     fromCps $ bracket
       (VkShader.createShaderModule device createInfo Nothing)
@@ -416,7 +430,7 @@ runPipeline e CompiledPipeline{..} = do
   let descriptorSet = compiledPipelineDescriptorSets V.! frameNumber
       descriptorWrites = V.fromList
         . flip fmap compiledPipelineUniformInput $ \(bn, getter) ->
-            let b = withBufferGetter bufferHandle getter e
+            let b = withBufferGetter getter e bufferHandle
             in SomeStruct $ Vk.zero {
               VkDSWrite.dstSet = descriptorSet,
               VkDSWrite.dstBinding = fromIntegral bn,
@@ -442,7 +456,7 @@ runPipeline e CompiledPipeline{..} = do
   let SyncObjects{..} = frameSyncObjects
       commandBuffer = frameCommandBuffer
   recordCommandBuffer commandBuffer framebuffer compiledPipeline descriptorSet
-    compiledPipelineVertexInput
+    compiledPipelinePrimitiveArray
 
   let submitInfos = fmap SomeStruct . V.singleton $ Vk.zero {
     VkQueue.commandBuffers =
@@ -458,12 +472,10 @@ runPipeline e CompiledPipeline{..} = do
     -> Vk.Framebuffer
     -> VkPipeline.Pipeline
     -> Vk.DescriptorSet
-    -> BufferGetter e
+    -> PrimitiveArrayGetter e
     -> ShadersT m ()
   recordCommandBuffer commandBuffer framebuffer pipelineHandle descriptorSet
-    bufferGetter = do
-    let bufferHandle' = withBufferGetter bufferHandle bufferGetter e
-        bufferNumVertices' = withBufferGetter bufferNumVertices bufferGetter e
+    primitiveArrayGetter = do
     -- Use Codensity to bracket command buffer recording and render pass.
     flip runCodensity return $ do
       extent <- lift getExtent
@@ -505,181 +517,34 @@ runPipeline e CompiledPipeline{..} = do
         (V.singleton descriptorSet)
         V.empty
 
-      VkCmd.cmdBindVertexBuffers commandBuffer 0
-        (V.singleton bufferHandle') (V.singleton 0)
+      -- Begin draw calls
+      withPrimitiveArray primitiveArrayGetter e $ \pa ->
+        forM_ (unPrimitiveArray pa) $
+          \PrimitiveArrayDrawCall{..} -> do
 
-      VkCmd.cmdDraw commandBuffer bufferNumVertices' 1 0 0
+        let vertexBuffer = primitiveArrayVertices
+            vertexStart = primitiveArrayStart
+            indexed = primitiveArrayIndexed
+            instances = primitiveArrayInstances
+            topology = primitiveTopology primitiveArrayTopology
 
+        let (instanceBuffer, numInstances, instanceStart) = case instances of
+              Nothing              -> (Vk.zero, 1, 0)
+              Just (b, len, start) -> (b, fromIntegral len, fromIntegral start)
 
+        VkCmd.cmdBindVertexBuffers commandBuffer 0
+          (V.fromList [ vertexBuffer, instanceBuffer ])
+          (V.fromList [ 0, 0 ])
 
--- Represents 4 byte aligned data
-class VertexInput a where
-  type VertexFormat a
-  toVertex :: ToVertex a (VertexFormat a)
+        VkCmd.cmdSetPrimitiveTopology commandBuffer topology
 
-data ToVertex a b = ToVertex
-  -- Builds Vulcan attribute descriptions
-  (Kleisli AttrDescrM a b)
-  -- Builds GLSL vertex input declarations
-  (Kleisli DeclM a b)
-
-instance Category ToVertex where
-  id = ToVertex id id
-  (ToVertex a b) . (ToVertex a' b') = ToVertex (a . a') (b . b')
-
-instance Arrow ToVertex where
-  arr f = ToVertex (arr f) (arr f)
-  first (ToVertex a b) = ToVertex (first a) (first b)
-
-type AttrDescrM =
-  WriterT
-    [VkAttrs.VertexInputAttributeDescription]
-    -- Offset, location
-    (State (Word32, Word32))
-
-type DeclM = ReaderT InOut (StateT Int (Writer ByteString))
-
-tellDecl :: ByteString -> DeclM ByteString
-tellDecl typ = do
-  loc <- getNext
-  io <- ask
-  let inOut = case io of { In -> "in"; Out -> "out" }
-      loc' = BS.pack . show $ loc
-      name = inOut <> loc'
-  tell $ "layout(location = " <> loc' <> ") " <> inOut <> " " <> typ <> " "
-           <> name <> ";\n"
-  return name
-
-data InOut = In | Out
-
-
-
-instance VertexInput (B Float) where
-  type VertexFormat (B Float) = S V Float
-  toVertex = ToVertex
-    (Kleisli $ \B{..} -> do
-       (offset, loc) <- update $
-         \(o, l) -> (o + fromIntegral bOffset, l + 1)
-       tell [Vk.zero {
-         VkAttrs.binding = 0,
-         VkAttrs.format = VkEnum.FORMAT_R32_SFLOAT,
-         VkAttrs.location = loc,
-         VkAttrs.offset = offset
-       }]
-       return undefined
-    )
-    (Kleisli . const $ do
-       S . return <$> tellDecl "float"
-    )
-
-instance VertexInput (B (V2 Float)) where
-  type VertexFormat (B (V2 Float)) = S V (V2 Float)
-  toVertex = ToVertex
-    (Kleisli $ \B{..} -> do
-       (offset, loc) <- update $
-         \(o, l) -> (o + fromIntegral bOffset, l + 1)
-       tell [Vk.zero {
-         VkAttrs.binding = 0,
-         VkAttrs.format = VkEnum.FORMAT_R32G32_SFLOAT,
-         VkAttrs.location = loc,
-         VkAttrs.offset = offset
-       }]
-       return undefined
-    )
-    (Kleisli . const $ do
-       S . return <$> tellDecl "vec2"
-    )
-
-instance VertexInput (B (V3 Float)) where
-  type VertexFormat (B (V3 Float)) = S V (V3 Float)
-  toVertex = ToVertex
-    (Kleisli $ \B{..} -> do
-       (offset, loc) <- update $
-         \(o, l) -> (o + fromIntegral bOffset, l + 1)
-       tell [Vk.zero {
-         VkAttrs.binding = 0,
-         VkAttrs.format = VkEnum.FORMAT_R32G32B32_SFLOAT,
-         VkAttrs.location = loc,
-         VkAttrs.offset = offset
-       }]
-       return undefined
-    )
-    (Kleisli . const $ do
-       S . return <$> tellDecl "vec3"
-    )
-
-instance (VertexInput a, VertexInput b) => VertexInput (a, b) where
-  type VertexFormat (a, b) = (VertexFormat a, VertexFormat b)
-  toVertex =
-    proc ~(a, b) -> do
-      a' <- toVertex -< a
-      b' <- toVertex -< b
-      returnA -< (a', b')
-
-
-class FragmentInput a where
-  type FragmentFormat a
-  toFragment :: ToFragment a (FragmentFormat a)
-
-newtype ToFragment a b = ToFragment
-  -- Vertex shader output assignments (combined into a S V ()) and GLSL
-  -- declarations.
-  (Kleisli (StateT (S V ()) DeclM) a b)
-
-instance Category ToFragment where
-  id = ToFragment id
-  (ToFragment a) . (ToFragment b) = ToFragment (a . b)
-
-instance Arrow ToFragment where
-  arr = ToFragment . arr
-  first (ToFragment a) = ToFragment (first a)
-
-instance FragmentInput (S V Float) where
-  type FragmentFormat (S V Float) = S F Float
-  toFragment = ToFragment
-    (Kleisli $ \a -> do
-      n <- lift $ tellDecl "float"
-      out <- get
-      put . S $ do
-        _ <- unS out
-        a' <- unS a
-        tellStatement $ n <> " = " <> a'
-        return n
-      return . S $ return n
-    )
-
-instance FragmentInput (S V (V3 Float)) where
-  type FragmentFormat (S V (V3 Float)) = S F (V3 Float)
-  toFragment = ToFragment
-    (Kleisli $ \a -> do
-      n <- lift $ tellDecl "vec3"
-      out <- get
-      put . S $ do
-        _ <- unS out
-        a' <- unS a
-        tellStatement $ n <> " = " <> a'
-        return n
-      return . S $ return n
-    )
-
-instance FragmentInput (S V (V4 Float)) where
-  type FragmentFormat (S V (V4 Float)) = S F (V4 Float)
-  toFragment = ToFragment
-    (Kleisli $ \a -> do
-      n <- lift $ tellDecl "vec4"
-      out <- get
-      put . S $ do
-        _ <- unS out
-        a' <- unS a
-        tellStatement $ n <> " = " <> a'
-        return n
-      return . S $ return n
-    )
-
-instance (FragmentInput (S V a), FragmentInput (S V b))
-    => FragmentInput (S V a, S V b) where
-  type FragmentFormat (S V a, S V b) = (FragmentFormat (S V a), FragmentFormat (S V b))
-  toFragment = proc ~(a, b) -> do
-    a' <- toFragment -< a
-    b' <- toFragment -< b
-    returnA -< (a', b')
+        case indexed of
+          Indexed IndexArray{..} -> do
+            VkCmd.cmdBindIndexBuffer commandBuffer indexArrayBufferHandle
+              0 indexArrayType
+            VkCmd.cmdDrawIndexed commandBuffer (fromIntegral indexArrayLength)
+              numInstances (fromIntegral indexArrayStart)
+              (fromIntegral vertexStart) instanceStart
+          Unindexed numVertices ->
+            VkCmd.cmdDraw commandBuffer (fromIntegral numVertices) numInstances
+              (fromIntegral vertexStart) instanceStart

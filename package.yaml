@@ -17,6 +17,7 @@ default-extensions:
 - ExistentialQuantification
 - FlexibleContexts
 - FlexibleInstances
+- GADTs
 - GeneralizedNewtypeDeriving
 - MultiParamTypeClasses
 - OverloadedStrings

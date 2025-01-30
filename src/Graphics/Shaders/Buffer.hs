@@ -1,6 +1,10 @@
 module Graphics.Shaders.Buffer (
   Buffer,
   B,
+
+  BufferFormat(..),
+  ToBuffer(..),
+
   withBuffer
 ) where
 

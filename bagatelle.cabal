@@ -35,19 +35,25 @@ executable bagatelle
       Graphics.Shaders.Buffer
       Graphics.Shaders.Exception
       Graphics.Shaders.Expr
+      Graphics.Shaders.FragmentStream
       Graphics.Shaders.Internal.Buffer
+      Graphics.Shaders.Internal.DeclM
       Graphics.Shaders.Internal.Device
       Graphics.Shaders.Internal.Device.Physical
       Graphics.Shaders.Internal.Device.SwapChain
       Graphics.Shaders.Internal.Expr
+      Graphics.Shaders.Internal.FragmentStream
       Graphics.Shaders.Internal.Instance
       Graphics.Shaders.Internal.Pipeline
+      Graphics.Shaders.Internal.PrimitiveArray
+      Graphics.Shaders.Internal.PrimitiveStream
       Graphics.Shaders.Internal.Sync
       Graphics.Shaders.Internal.Window
       Graphics.Shaders.Logger.Base
       Graphics.Shaders.Logger.Class
       Graphics.Shaders.Pipeline
-      Graphics.Shaders.Shader
+      Graphics.Shaders.PrimitiveArray
+      Graphics.Shaders.PrimitiveStream
       Graphics.Shaders.Uniform
       Window
       Paths_bagatelle
@@ -60,6 +66,7 @@ executable bagatelle
       ExistentialQuantification
       FlexibleContexts
       FlexibleInstances
+      GADTs
       GeneralizedNewtypeDeriving
       MultiParamTypeClasses
       OverloadedStrings

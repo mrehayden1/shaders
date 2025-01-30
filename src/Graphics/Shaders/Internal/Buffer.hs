@@ -45,7 +45,7 @@ import Graphics.Shaders.Logger.Class
 
 data Buffer a = Buffer {
   bufferHandle :: Vk.Buffer,
-  bufferNumVertices :: Word32
+  bufferLength :: Int
 }
 
 withBuffer :: forall a m. (MonadAsyncException m, MonadLogger m,
@@ -55,12 +55,12 @@ withBuffer :: forall a m. (MonadAsyncException m, MonadLogger m,
 withBuffer vertices = do
   deviceHandle <- getDeviceHandle
 
-  let ToBuffer (Kleisli calcStride) (Kleisli bufferer) alignMode
+  let ToBuffer (Kleisli calcAlign) (Kleisli bufferer) _ alignMode
         = toBuffer :: ToBuffer (HostFormat a) a
 
   let ((_, pads), stride) = flip runState 0 . runWriterT
                               . flip runReaderT alignMode
-                              . calcStride $ (undefined :: HostFormat a)
+                              . calcAlign $ undefined
       numElems = length vertices
       bufferSize = fromIntegral stride * fromIntegral numElems
 
@@ -84,7 +84,7 @@ withBuffer vertices = do
   -- Fill the buffer
   ptr <-
     VkMemory.mapMemory deviceHandle stagingBufferMemory 0 bufferSize Vk.zero
-  _ <- liftIO . flip runStateT (ptr, cycle pads) . mapM bufferer $ vertices
+  liftIO . flip evalStateT (ptr, cycle pads) . mapM_ bufferer $ vertices
   VkMemory.unmapMemory deviceHandle stagingBufferMemory
 
   commandPool <- getCommandPool
@@ -92,7 +92,7 @@ withBuffer vertices = do
 
   return $ Buffer {
     bufferHandle = vertexBuffer,
-    bufferNumVertices = fromIntegral numElems
+    bufferLength = numElems
   }
 
 withBuffer' :: (MonadAsyncException m, MonadLogger m)
@@ -191,30 +191,40 @@ class BufferFormat a where
 
 data ToBuffer a b = ToBuffer
   -- Calculates stride of `b` and any padding for alignment
-  (Kleisli StrideM a b)
+  (Kleisli AlignM a b)
   -- Bufferer
   (Kleisli BufferWriterM a b)
+  -- Value producer
+  (Kleisli ValueProdM a b)
   -- Aignment
   AlignMode
 
--- Used to allocate memory, create descriptors, pad elements, etc, so is aware
--- of alignment.
-type StrideM =
+-- Calculates element stride, padding for aligning elements.
+type AlignM =
   ReaderT
     AlignMode
     (WriterT
-      [Int]  -- Element paddings.
+      [Int]  -- std140 paddings.
       (State
-        Int  -- Stride
+        Int  -- offset
       )
     )
 
 type BufferWriterM =
   StateT
     (Ptr (), -- Buffer pointer
-     [Int]   -- Element paddings, for alignment
+     [Int]   -- std140 paddings, for alignment
     )
     IO
+
+type ValueProdM =
+  ReaderT
+  Int       -- Binding number
+  (State
+    ([Int], -- std140 paddings
+     Int    -- offset
+    )
+  )
 
 data AlignMode = Align4Byte | AlignStd140
  deriving (Show, Eq)
@@ -223,7 +233,11 @@ data AlignMode = Align4Byte | AlignStd140
 -- aligned buffer.
 alignWhenStd140 :: Int -> ToBuffer a a
 alignWhenStd140 a =
-  ToBuffer (Kleisli calcPadding) (Kleisli alignBufferWriter) Align4Byte
+  ToBuffer
+    (Kleisli calcPadding)
+    (Kleisli alignBufferWriter)
+    (Kleisli alignValueProd)
+    Align4Byte
  where
   calcPadding x = do
     alignMode <- ask
@@ -241,33 +255,46 @@ alignWhenStd140 a =
     (ptr, pad : pads) <- get
     put (ptr `plusPtr` pad, pads)
     return x
+  alignValueProd x = do
+    (pads, offset) <- get
+    put (tail pads, offset + head pads)
+    return x
 
 instance Category ToBuffer where
-  id = ToBuffer id id Align4Byte
-  (ToBuffer a b c) . (ToBuffer a' b' c') =
-    ToBuffer (a . a') (b . b') (combineAlignMode c c')
+  id = ToBuffer id id id Align4Byte
+  (ToBuffer a b c d) . (ToBuffer a' b' c' d') =
+    ToBuffer (a . a') (b . b') (c . c') (combineAlignMode d d')
    where
     combineAlignMode AlignStd140 _           = AlignStd140
     combineAlignMode _           AlignStd140 = AlignStd140
     combineAlignMode alignMode   _           = alignMode
 
 instance Arrow ToBuffer where
-  arr f = ToBuffer (arr f) (arr f) Align4Byte
-  first (ToBuffer a b c) = ToBuffer (first a) (first b) c
+  arr f = ToBuffer (arr f) (arr f) (arr f) Align4Byte
+  first (ToBuffer a b c d) = ToBuffer (first a) (first b) (first c) d
 
--- Tightly packed 4 byte aligned data.
-newtype B a = B {
-  bOffset :: Word64 -- 4 byte aligned offset
+-- Buffered value
+data B a = B {
+  bBinding :: Int,
+  bOffset :: Int
 } deriving (Show)
 
--- Values buffered with std140 alignment.
+-- Wrapper for values buffered with std140 alignment.
 data Uniform a = Uniform
 
 instance BufferFormat a => BufferFormat (Uniform a) where
   type HostFormat (Uniform a) = HostFormat a
   toBuffer =
-    let ToBuffer a b _ = toBuffer :: ToBuffer (HostFormat a) a
-    in ToBuffer a b AlignStd140 >>> arr (const Uniform)
+    let ToBuffer a b c _ = toBuffer :: ToBuffer (HostFormat a) a
+    in ToBuffer a b c AlignStd140 >>> arr (const Uniform)
+
+instance BufferFormat (B ()) where
+  type HostFormat (B ()) = ()
+  toBuffer = proc ~() ->
+    returnA -< B {
+      bBinding = undefined,
+      bOffset = 0
+    }
 
 -- Scalars are always std140 aligned since all our scalars are 4 bytes wide.
 toBufferUnaligned :: forall a. Storable a => ToBuffer a (B a)
@@ -275,37 +302,49 @@ toBufferUnaligned =
   ToBuffer
     (Kleisli (const addOffset))
     (Kleisli doBuffer)
+    (Kleisli (const valueProd))
     Align4Byte
  where
   addOffset = do
     let sz = sizeOf (undefined :: a)
     modify (+ sz)
-    return $ B {
-      bOffset = fromIntegral sz
-    }
+    return undefined
 
   doBuffer a = do
     let sz = sizeOf (undefined :: a)
     (ptr, pad) <- get
     put (ptr `plusPtr` sz, pad)
     liftIO $ poke (castPtr ptr) a
+    return undefined
+
+  valueProd = do
+    binding <- ask
+    let sz = sizeOf (undefined :: a)
+    (pads, offset) <- get
+    put (pads, offset + sz)
     return $ B {
-      bOffset = fromIntegral sz
+      bBinding = binding,
+      bOffset = offset
     }
 
 instance BufferFormat (B Float) where
   type HostFormat (B Float) = Float
   toBuffer = toBufferUnaligned
 
+instance BufferFormat (B Word32) where
+  type HostFormat (B Word32) = Word32
+  toBuffer = toBufferUnaligned
+
+castB :: B a -> B b
+castB B{..} = B{ bBinding = bBinding, bOffset = bOffset }
+
 instance BufferFormat (B (V2 Float)) where
   type HostFormat (B (V2 Float)) = V2 Float
   toBuffer = proc ~(V2 a b) -> do
     alignWhenStd140 (2 * sz) -< () -- align to 2N per std140
-    _ <- toBufferUnaligned -< a
+    a' <- toBufferUnaligned -< a
     _ <- toBufferUnaligned -< b
-    returnA -< B {
-      bOffset = 2 * fromIntegral sz
-    }
+    returnA -< castB a'
    where
     sz = sizeOf (undefined :: Float)
 
@@ -313,12 +352,10 @@ instance BufferFormat (B (V3 Float)) where
   type HostFormat (B (V3 Float)) = V3 Float
   toBuffer = proc ~(V3 a b c) -> do
     alignWhenStd140 (4 * sz) -< () -- align to 4N per std140
-    _ <- toBufferUnaligned -< a
+    a' <- toBufferUnaligned -< a
     _ <- toBufferUnaligned -< b
     _ <- toBufferUnaligned -< c
-    returnA -< B {
-      bOffset = 3 * fromIntegral sz
-    }
+    returnA -< castB a'
    where
     sz = sizeOf (undefined :: Float)
 
@@ -326,27 +363,23 @@ instance BufferFormat (B (V4 Float)) where
   type HostFormat (B (V4 Float)) = V4 Float
   toBuffer = proc ~(V4 a b c d) -> do
     alignWhenStd140 (4 * sz) -< () -- align to 4N per std140
-    _ <- toBufferUnaligned -< a
+    a' <- toBufferUnaligned -< a
     _ <- toBufferUnaligned -< b
     _ <- toBufferUnaligned -< c
     _ <- toBufferUnaligned -< d
-    returnA -< B {
-      bOffset = 4 * fromIntegral sz
-    }
+    returnA -< castB a'
    where
     sz = sizeOf (undefined :: Float)
 
 instance BufferFormat (B (M33 Float)) where
   type HostFormat (B (M33 Float)) = M33 Float
   toBuffer = proc ~(M33 a b c) -> do
-    _ <- buffer -< a
+    a' <- buffer -< a
     _ <- buffer -< b
     _ <- buffer -< c
     -- ensure the next member is 4N aligned per std140
     alignWhenStd140 (4 * sz) -< ()
-    returnA -< B {
-      bOffset = 3 * 3 * fromIntegral sz
-    }
+    returnA -< castB a'
    where
     sz = sizeOf (undefined :: Float)
     buffer = toBuffer :: ToBuffer (V3 Float) (B (V3 Float))
@@ -354,15 +387,12 @@ instance BufferFormat (B (M33 Float)) where
 instance BufferFormat (B (M44 Float)) where
   type HostFormat (B (M44 Float)) = M44 Float
   toBuffer = proc ~(M44 a b c d) -> do
-    _ <- buffer -< a
+    a' <- buffer -< a
     _ <- buffer -< b
     _ <- buffer -< c
     _ <- buffer -< d
-    returnA -< B {
-      bOffset = 4 * 4 * fromIntegral sz
-    }
+    returnA -< castB a'
    where
-    sz = sizeOf (undefined :: Float)
     buffer = toBuffer :: ToBuffer (V4 Float) (B (V4 Float))
 
 instance (BufferFormat a, BufferFormat b) => BufferFormat (a, b) where
@@ -389,3 +419,14 @@ instance (BufferFormat a, BufferFormat b, BufferFormat c, BufferFormat d)
     (a', b', c') <- toBuffer -< (a, b, c)
     d' <- toBuffer -< d
     returnA -< (a', b', c', d')
+
+instance (BufferFormat a, BufferFormat b, BufferFormat c, BufferFormat d,
+  BufferFormat e)
+    => BufferFormat (a, b, c, d, e) where
+  type HostFormat (a, b, c, d, e)
+          = (HostFormat a, HostFormat b, HostFormat c, HostFormat d,
+             HostFormat e)
+  toBuffer = proc ~(a, b, c, d, e) -> do
+    (a', b', c', d') <- toBuffer -< (a, b, c, d)
+    e' <- toBuffer -< e
+    returnA -< (a', b', c', d', e')
