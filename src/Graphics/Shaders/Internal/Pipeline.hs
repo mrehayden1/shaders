@@ -27,6 +27,7 @@ import Control.Monad.State
 import Control.Monad.Writer
 import Data.Bits
 import Data.ByteString (ByteString)
+import Data.Char
 import qualified Data.ByteString.Char8 as BS
 import Data.Default
 import Data.Function hiding ((.), id)
@@ -278,7 +279,7 @@ compilePipeline pipeline = do
              tellStatement $ "gl_Position = " <> n
            )
         <> "}"
-  vertexShaderModule <- createVertexShader deviceHandle vShaderSource
+  vertexShaderModule <- createShader deviceHandle Vertex vShaderSource
 
   let fShaderSource = "#version 460\n\n"
         <> fInDecls <> "\n"
@@ -290,7 +291,7 @@ compilePipeline pipeline = do
              tellStatement $ "outColor = " <> n
            )
         <> "}"
-  fragmentShaderModule <- createFragmentShader deviceHandle fShaderSource
+  fragmentShaderModule <- createShader deviceHandle Fragment fShaderSource
 
   debug "Creating pipeline layout."
   let layoutInfo = Vk.zero {
@@ -379,44 +380,41 @@ compilePipeline pipeline = do
       (,) <$> uniformBindingNumber <*> uniformBufferGetter,
     compiledPipelinePrimitiveArray = vertexPrimitiveArrayGetter
   }
- where
-  createVertexShader :: VkDevice.Device
-    -> ByteString
-    -> ShadersT m VkShader.ShaderModule
-  createVertexShader device code = do
-    debug "Compiling vertex shader source."
-    logTrace . BS.unpack $ "Dumping vertex shader source to log: \n" <> code
-    (SpirV.S compiledCode :: SpirV.S 'SpirV.VertexShader) <-
-      liftIO $ SpirV.compile code "<filename>" "main" (def :: SpirV.C ())
-    let createInfo = Vk.zero {
-      VkShader.code = compiledCode
-    }
-    debug "Creating vertex shader module."
-    fromCps $ bracket
-      (VkShader.createShaderModule device createInfo Nothing)
-      (\s -> do
-        debug "Destroying vertex shader module."
-        VkShader.destroyShaderModule device s Nothing
-      )
 
-  createFragmentShader :: VkDevice.Device
-    -> ByteString
-    -> ShadersT m VkShader.ShaderModule
-  createFragmentShader device code = do
-    debug "Compiling fragment shader source."
-    logTrace . BS.unpack $ "Dumping fragment shader source to log: \n" <> code
-    (SpirV.S compiledCode :: SpirV.S 'SpirV.FragmentShader) <-
-      liftIO $ SpirV.compile code "<filename>" "main" (def :: SpirV.C ())
-    let createInfo = Vk.zero {
-      VkShader.code = compiledCode
-    }
-    debug "Creating fragment shader module."
-    fromCps $ bracket
-      (VkShader.createShaderModule device createInfo Nothing)
-      (\s -> do
-        debug "Destroying fragment shader module."
-        VkShader.destroyShaderModule device s Nothing
-      )
+
+data ShaderStage = Vertex | Fragment
+ deriving Show
+
+createShader :: (MonadAsyncException m, MonadLogger m)
+  => VkDevice.Device
+  -> ShaderStage
+  -> ByteString
+  -> ShadersT m VkShader.ShaderModule
+createShader device stage code = do
+  let stageName = fmap toLower . show $ stage
+  debug . printf "Creating %s shader module." $ stageName
+  debug "Compiling shader source."
+  logTrace . BS.unpack $ "Dumping shader source to log: \n" <> code
+  compiledCode <-
+    liftIO $ case stage of
+      Fragment -> compile @'SpirV.FragmentShader
+      Vertex -> compile @'SpirV.VertexShader
+  let createInfo = Vk.zero {
+    VkShader.code = compiledCode
+  }
+  fromCps $ bracket
+    (VkShader.createShaderModule device createInfo Nothing)
+    (\s -> do
+      debug . printf "Destroying %s shader module." $ stageName
+      VkShader.destroyShaderModule device s Nothing
+    )
+ where
+  compile :: forall (s :: SpirV.ShaderKind). SpirV.IsShaderKind s
+    => IO ByteString
+  compile = do
+    SpirV.S compiledCode :: SpirV.S s <-
+      SpirV.compile code "" "main" (def :: SpirV.C ())
+    return compiledCode
 
 runPipeline :: forall m e. (MonadIO m, MonadLogger m)
   => e
@@ -494,8 +492,7 @@ runPipeline e CompiledPipeline{..} = do
       VkCmd.cmdUseRenderPass commandBuffer renderPassBeginInfo
         VkCmd.SUBPASS_CONTENTS_INLINE . (&) ()
     lift $ VkCmd.cmdBindPipeline commandBuffer
-             VkEnum.PIPELINE_BIND_POINT_GRAPHICS
-             pipelineHandle
+      VkEnum.PIPELINE_BIND_POINT_GRAPHICS pipelineHandle
 
     let viewport = Vk.zero {
       VkPipeline.height = fromIntegral . VkExtent2D.height $ extent,

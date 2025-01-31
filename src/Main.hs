@@ -65,21 +65,26 @@ main = do
             ]
       quadVertexArray <- toVertexArray <$> withBuffer quadVertices
 
-      let quadIndices = [ 0, 1, 2, 1, 3, 2 ] :: [Word32]
-      quadIndexBuffer :: Buffer (B Word32) <- withBuffer quadIndices
-      let quadIndexArray = toIndexArray quadIndexBuffer
-
-      let quadInstances = [0..(100 - 1)] <&> \n ->
+      let n = 100 :: Int
+      let quadInstances = [0..(n^2 - 1)] <&> \x ->
             (
-              V2 (fromIntegral (n `mod` 10) * 0.2 - 1)
-                 (fromIntegral (n `div` 10) * 0.2 - 1),
-              0.1
+              V2 (fromIntegral (x `mod` n) * (2 / fromIntegral n) - 1)
+                 (fromIntegral (x `div` n) * (2 / fromIntegral n) - 1),
+              1.5 / fromIntegral n
             )
       quadInstanceVertexArray <-
         toVertexArray <$> withBuffer quadInstances
 
-      let quadPrimitives = toPrimitiveArrayIndexedInstanced TriangleList
+      {-
+      let quadIndices = [ 0, 1, 2, 1, 3, 2 ] :: [Word32]
+      quadIndexBuffer :: Buffer (B Word32) <- withBuffer quadIndices
+      let quadIndexArray = toIndexArray quadIndexBuffer
+
+          quadPrimitives = toPrimitiveArrayIndexedInstanced TriangleList
             quadIndexArray quadVertexArray quadInstanceVertexArray
+      -}
+      let quadPrimitives = toPrimitiveArrayInstanced TriangleStrip
+            quadVertexArray quadInstanceVertexArray
 
       let matrixData = [
               M44

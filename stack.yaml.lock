@@ -12,12 +12,12 @@ packages:
   original:
     hackage: language-spir-v-0.1.0.3
 - completed:
-    hackage: shaderc-0.1.0.5@sha256:abd04455e790464abf492d2f679a50c11ba9d9fbde034279c7cb9615bd8e563a,2241
+    hackage: shaderc-0.1.0.7@sha256:559d1ae01a39e1232cfbdde4a5bbb35ce6b481c864cd642939d7ae5ba6064798,2241
     pantry-tree:
-      sha256: 21170a1c6843f2555cf2313c3d842ece6a330f007a7f7f78de709bc1578aa5e7
+      sha256: 51c6bf8342313b5997f05004a55eb369a36594c72e99db0220b883112bed55aa
       size: 1402
   original:
-    hackage: shaderc-0.1.0.5
+    hackage: shaderc-0.1.0.7
 - completed:
     hackage: storable-peek-poke-0.1.0.2@sha256:416da729ac76d53d39a744021a735ecc095b0d5f84b2ea235b54c457b9de619c,1894
     pantry-tree:

@@ -42,7 +42,7 @@ packages:
 #
 extra-deps:
 - language-spir-v-0.1.0.3
-- shaderc-0.1.0.5
+- shaderc-0.1.0.7
 - storable-peek-poke-0.1.0.2
 - typelevel-tools-yj-0.1.0.7
 - vulkan-3.26.2

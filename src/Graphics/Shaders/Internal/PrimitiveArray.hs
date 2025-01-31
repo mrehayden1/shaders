@@ -69,8 +69,10 @@ data IndexArray = IndexArray {
 class IndexInput a where
   indexType :: a -> VkEnum.IndexType
 
+{- TODO Currently no support for buffering 16-bit data.
 instance IndexInput (B Word16) where
   indexType _ = VkEnum.INDEX_TYPE_UINT16
+-}
 
 instance IndexInput (B Word32) where
   indexType _ = VkEnum.INDEX_TYPE_UINT32
