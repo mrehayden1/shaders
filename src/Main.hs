@@ -7,11 +7,11 @@ import Control.Monad.Reader
 import Data.Functor
 import Data.IORef
 import Data.Time.Clock
-import Data.Word
 import Text.Printf
 
 import Data.Linear
 import Graphics.Shaders
+import Graphics.Shaders.Internal.Texture
 import Graphics.Shaders.Uniform
 import Window
 
@@ -43,6 +43,7 @@ main = do
     window <- withWindow appName
 
     runShadersT window $ do
+      _ <- loadTexture
 
       timeRef <- liftIO $ newIORef =<< getCurrentTime
 

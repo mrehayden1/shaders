@@ -48,12 +48,14 @@ executable bagatelle
       Graphics.Shaders.Internal.PrimitiveArray
       Graphics.Shaders.Internal.PrimitiveStream
       Graphics.Shaders.Internal.Sync
+      Graphics.Shaders.Internal.Texture
       Graphics.Shaders.Internal.Window
       Graphics.Shaders.Logger.Base
       Graphics.Shaders.Logger.Class
       Graphics.Shaders.Pipeline
       Graphics.Shaders.PrimitiveArray
       Graphics.Shaders.PrimitiveStream
+      Graphics.Shaders.Texture.Loader.TGA
       Graphics.Shaders.Uniform
       Window
       Paths_bagatelle
@@ -62,6 +64,7 @@ executable bagatelle
   default-extensions:
       AllowAmbiguousTypes
       Arrows
+      BinaryLiterals
       DataKinds
       ExistentialQuantification
       FlexibleContexts
@@ -81,6 +84,7 @@ executable bagatelle
   build-depends:
       GLFW-b
     , base >=4.7 && <5
+    , binary
     , bytestring
     , containers
     , data-default

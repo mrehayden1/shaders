@@ -13,6 +13,7 @@ extra-source-files:
 default-extensions:
 - AllowAmbiguousTypes
 - Arrows
+- BinaryLiterals
 - DataKinds
 - ExistentialQuantification
 - FlexibleContexts
@@ -62,6 +63,7 @@ executables:
     - -with-rtsopts=-N
     dependencies:
     - GLFW-b
+    - binary
     - bytestring
     - containers
     - data-default

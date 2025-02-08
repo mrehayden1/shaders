@@ -6,7 +6,10 @@ module Graphics.Shaders.Internal.Buffer (
   BufferFormat(..),
   ToBuffer(..),
 
-  withBuffer
+  withBuffer,
+  withBuffer',
+  allocateMemory,
+  withOneTimeSubmitCommandBuffer
 ) where
 
 import Prelude hiding ((.), id)
@@ -31,7 +34,7 @@ import qualified Vulkan.Core10.Enums as Vk
 import qualified Vulkan.Core10.FundamentalTypes as Vk
 import qualified Vulkan.Core10.Handles as Vk
 import qualified Vulkan.Core10.Memory as VkMemory
-import qualified Vulkan.Core10.MemoryManagement as VkManagement
+import qualified Vulkan.Core10.MemoryManagement as VkMemRequirements
 import qualified Vulkan.Core10.Queue as VkQueue
 import Vulkan.CStruct.Extends
 import qualified Vulkan.Zero as Vk
@@ -65,7 +68,7 @@ withBuffer vertices = do
       bufferSize = fromIntegral stride * fromIntegral numElems
 
   -- Create a vertex buffer
-  debug "Creating buffer."
+  debug "Creating destination buffer."
   let vertexBufferUsageFlags = VkBuffer.BUFFER_USAGE_TRANSFER_DST_BIT
         .|. VkBuffer.BUFFER_USAGE_VERTEX_BUFFER_BIT
       vertexBufferPropertyFlags = Vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT
@@ -82,13 +85,17 @@ withBuffer vertices = do
     stagingBufferUsageFlags stagingMemoryPropertyFlags
 
   -- Fill the buffer
+  debug "Filling staging buffer."
   ptr <-
     VkMemory.mapMemory deviceHandle stagingBufferMemory 0 bufferSize Vk.zero
   liftIO . flip evalStateT (ptr, cycle pads) . mapM_ bufferer $ vertices
   VkMemory.unmapMemory deviceHandle stagingBufferMemory
 
-  commandPool <- getCommandPool
-  copyBuffer commandPool stagingBuffer vertexBuffer bufferSize
+  debug "Copying staging buffer to destination buffer."
+  withOneTimeSubmitCommandBuffer $ \commandBuffer -> do
+    let bufferCopy = Vk.zero { VkCopy.size = bufferSize }
+    VkCmd.cmdCopyBuffer commandBuffer stagingBuffer vertexBuffer
+      (V.singleton bufferCopy)
 
   return $ Buffer {
     bufferHandle = vertexBuffer,
@@ -102,6 +109,7 @@ withBuffer' :: (MonadAsyncException m, MonadLogger m)
   -> ShadersT m (Vk.Buffer, Vk.DeviceMemory)
 withBuffer' bufferSize bufferUsageFlags memoryPropertyFlags = do
   deviceHandle <- getDeviceHandle
+
   let bufferInfo = Vk.zero {
         VkBuffer.sharingMode = VkBuffer.SHARING_MODE_EXCLUSIVE,
         VkBuffer.size = bufferSize,
@@ -110,16 +118,24 @@ withBuffer' bufferSize bufferUsageFlags memoryPropertyFlags = do
   buffer <- fromCps
     $ VkBuffer.withBuffer deviceHandle bufferInfo Nothing bracket
 
-  -- Find compatible memory
   memoryRequirements <-
-    VkManagement.getBufferMemoryRequirements deviceHandle buffer
+    VkMemRequirements.getBufferMemoryRequirements deviceHandle buffer
 
-  let getMemoryTypeIndexIfCompatible i t =
-        if VkDevice.propertyFlags t .&&. memoryPropertyFlags
-             && testBit (VkManagement.memoryTypeBits memoryRequirements) i
-          then Just i
-          else Nothing
+  -- Allocate and bind buffer memory
+  memory <- allocateMemory memoryRequirements memoryPropertyFlags
 
+  VkMemRequirements.bindBufferMemory deviceHandle buffer memory 0
+
+  return (buffer, memory)
+
+allocateMemory :: (MonadAsyncException m, MonadLogger m)
+  => VkMemRequirements.MemoryRequirements
+  -> Vk.MemoryPropertyFlags
+  -> ShadersT m Vk.DeviceMemory
+allocateMemory memoryRequirements memoryPropertyFlags = do
+  deviceHandle <- getDeviceHandle
+
+  -- Find compatible memory
   memoryProperties <- getDeviceMemoryProperties
   let memoryTypeIndices = V.imapMaybe getMemoryTypeIndexIfCompatible
         . VkDevice.memoryTypes
@@ -132,27 +148,27 @@ withBuffer' bufferSize bufferUsageFlags memoryPropertyFlags = do
 
   let memoryTypeIndex = V.head memoryTypeIndices
 
-  -- Allocate and bind buffer memory
   let allocInfo = Vk.zero {
-        VkMemory.allocationSize = VkManagement.size memoryRequirements,
+        VkMemory.allocationSize = VkMemRequirements.size memoryRequirements,
         VkMemory.memoryTypeIndex = fromIntegral memoryTypeIndex
       }
-  memory <- fromCps
+  fromCps
     $ VkMemory.withMemory deviceHandle allocInfo Nothing bracket
+ where
+  getMemoryTypeIndexIfCompatible i t =
+    if VkDevice.propertyFlags t .&&. memoryPropertyFlags
+         && testBit (VkMemRequirements.memoryTypeBits memoryRequirements) i
+    then Just i
+    else Nothing
 
-  VkManagement.bindBufferMemory deviceHandle buffer memory 0
 
-  return (buffer, memory)
-
-copyBuffer :: (MonadIO m, MonadLogger m)
-  => Vk.CommandPool
-  -> Vk.Buffer
-  -> Vk.Buffer
-  -> Vk.DeviceSize
+withOneTimeSubmitCommandBuffer :: (MonadIO m, MonadLogger m)
+  => (Vk.CommandBuffer -> ShadersT m ())
   -> ShadersT m ()
-copyBuffer commandPool src dest size = do
+withOneTimeSubmitCommandBuffer c = do
   deviceHandle <- getDeviceHandle
   queueHandle <- getQueueHandle
+  commandPool <- getCommandPool
   let commandBufferCreateInfo = Vk.zero {
         VkCmdBuffer.commandBufferCount = 1,
         VkCmdBuffer.commandPool = commandPool,
@@ -169,8 +185,7 @@ copyBuffer commandPool src dest size = do
       }
   VkCmdBuffer.beginCommandBuffer cmdBuffer beginInfo
 
-  let bufferCopy = Vk.zero { VkCopy.size = size }
-  VkCmd.cmdCopyBuffer cmdBuffer src dest (V.singleton bufferCopy)
+  c cmdBuffer
 
   VkCmdBuffer.endCommandBuffer cmdBuffer
 
@@ -184,6 +199,7 @@ copyBuffer commandPool src dest size = do
 
   debug "Destroying temporary command buffer."
   VkCmdBuffer.freeCommandBuffers deviceHandle commandPool cmdBuffers
+
 
 class BufferFormat a where
   type HostFormat a
