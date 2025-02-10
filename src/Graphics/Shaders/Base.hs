@@ -4,6 +4,7 @@ module Graphics.Shaders.Base (
   DrawState(..),
   runShadersT,
   fromCps,
+  fromCodensity,
 
   Frame(..),
   SyncObjects(..),
@@ -69,7 +70,10 @@ data DrawState = DrawState {
 }
 
 fromCps :: (forall b. (a -> m b) -> m b) -> ShadersT m a
-fromCps cps = ShadersT . lift . lift $ Codensity cps
+fromCps cps = fromCodensity $ Codensity cps
+
+fromCodensity :: Codensity m a -> ShadersT m a
+fromCodensity = ShadersT . lift . lift
 
 instance MonadTrans ShadersT where
   lift = ShadersT . lift . lift . lift

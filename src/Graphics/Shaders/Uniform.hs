@@ -52,16 +52,17 @@ getUniform getter = do
   -- Hash the getter StableName and look it up in the cache so we don't keep
   -- rebinding the uniform it's for.
   hash <- liftIO $ hashStableName <$> makeStableName getter
-  bindings <- Pipeline . gets $ \(_, _, _, ubs) -> ubs
+  bindings <- Pipeline . gets $ \(_, _, _, ubs, _) -> ubs
+  let hasBinding = hash `M.member` bindings
 
   -- Get the uniform binding location.
-  bind <- if hash `M.member` bindings
+  bind <- if hasBinding
             -- If it's already been bound return that,
             then return . uniformBindingNumber $ bindings M.! hash
             -- else use the next available one.
             else do
-              (_, bind, _, _) <- Pipeline . update $
-                \(n, un, ins, ub) -> (n, un + 1, ins, ub)
+              (_, bind, _, _, _) <- Pipeline . update $
+                \(n, un, ins, ubs, sbs) -> (n, un + 1, ins, ubs, sbs)
               return bind
 
   let bind' = BS.pack . show $ bind
@@ -86,15 +87,15 @@ getUniform getter = do
       }
 
   -- Create the uniform binding if it doesn't already have one.
-  when (hash `M.notMember` bindings) . Pipeline $ do
-    modify $ \(n, un, ins, ubs) ->
+  unless hasBinding . Pipeline $ do
+    modify $ \(n, un, ins, ubs, sbs) ->
       let ub = UniformBinding {
         uniformBindingNumber = bind,
         uniformBufferGetter = BufferGetter getter,
         uniformDeclaration = decl <> "\n",
         uniformDescrSetLayoutBinding = descrSetLayoutBinding
       }
-      in (n, un, ins, M.insert hash ub ubs)
+      in (n, un, ins, M.insert hash ub ubs, sbs)
 
   return a
 

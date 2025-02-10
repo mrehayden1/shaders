@@ -6,6 +6,7 @@ module Graphics.Shaders.Internal.Expr (
   ExprM(..),
 
   execExprM,
+  tellAssignment,
   tellStatement,
 
   vec2,
@@ -29,10 +30,10 @@ import Data.Linear
 newtype S x a = S { unS :: ExprM ByteString }
 
 -- Phantom type representing vertex shaders
-data V = V
+data V
 
 -- Phantom type representing fragment shaders
-data F = F
+data F
 
 newtype ExprM a = ExprM {
   unExprM :: ReaderT Indent (StateT TempName (Writer ByteString)) a
@@ -76,11 +77,6 @@ preop :: ByteString -> ByteString -> S x a -> S x a
 preop typ op a = S $ do
   a' <- unS a
   tellAssignment typ $ "(" <> op <> a' <> ")"
-
-postop :: ByteString -> ByteString -> S x a -> S x a
-postop typ op a = S $ do
-  a' <- unS a
-  tellAssignment typ $ "(" <> a' <> op <> ")"
 
 vec2 :: S x a -> S x a -> S x (V4 a)
 vec2 a b = S $ do

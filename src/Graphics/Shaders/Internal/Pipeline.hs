@@ -3,6 +3,7 @@ module Graphics.Shaders.Internal.Pipeline (
   CompiledPipeline,
 
   UniformBinding(..),
+  SamplerBinding(..),
   BufferGetter(..),
 
   PrimitiveStream,
@@ -16,6 +17,7 @@ module Graphics.Shaders.Internal.Pipeline (
 ) where
 
 import Prelude hiding ((.), id)
+import Control.Applicative
 import Control.Arrow
 import Control.Category
 import Control.Monad
@@ -47,10 +49,12 @@ import qualified Vulkan.Core10.CommandBufferBuilding as VkCmd
 import qualified Vulkan.Core10.DescriptorSet as VkDescr
 import qualified Vulkan.Core10.DescriptorSet as VkDSBuffer (
   DescriptorBufferInfo(..))
+import qualified Vulkan.Core10.DescriptorSet as VkDSImage (
+  DescriptorImageInfo(..))
 import qualified Vulkan.Core10.DescriptorSet as VkDSWrite (
   WriteDescriptorSet(..))
 import qualified Vulkan.Core10.Device as VkDevice
-import qualified Vulkan.Core10.Enums as VkEnum
+import qualified Vulkan.Core10.Enums as Vk
 import qualified Vulkan.Core10.Handles as Vk
 import qualified Vulkan.Core10.Pipeline as VkBinding (
   VertexInputBindingDescription(..))
@@ -74,14 +78,16 @@ import Graphics.Shaders.Internal.Expr
 import Graphics.Shaders.Internal.FragmentStream
 import Graphics.Shaders.Internal.PrimitiveArray
 import Graphics.Shaders.Internal.PrimitiveStream
+import Graphics.Shaders.Internal.Texture
 import Graphics.Shaders.Logger.Class
 
 data CompiledPipeline e = CompiledPipeline {
   compiledPipeline :: VkPipeline.Pipeline,
   compiledPipelineDescriptorSets :: Vector VkDescr.DescriptorSet,
   compiledPipelineLayout :: Vk.PipelineLayout,
-  compiledPipelineUniformInput :: [(Int, BufferGetter e)],
-  compiledPipelinePrimitiveArray :: PrimitiveArrayGetter e
+  compiledPipelinePrimitiveArray :: PrimitiveArrayGetter e,
+  compiledPipelineSamplerInput :: [(Int, e -> Texture)],
+  compiledPipelineUniformInput :: [(Int, BufferGetter e)]
 }
 
 -- Pipeline Monad
@@ -99,7 +105,9 @@ type PipelineS e = (
     -- Vertex binding mapped by unique name
     Map Int (VertexBinding e),
     -- Uniform binding mapped by hashed StableName of the uniform's getter.
-    Map Int (UniformBinding e)
+    Map Int (UniformBinding e),
+    -- Sampler binding mapped by hashed StableName of the samplers's getter.
+    Map Int (SamplerBinding e)
   )
 
 data VertexBinding e = VertexBinding {
@@ -116,10 +124,17 @@ data UniformBinding e = UniformBinding {
   uniformDescrSetLayoutBinding :: VkDescr.DescriptorSetLayoutBinding
 }
 
+data SamplerBinding e = SamplerBinding {
+  samplerBindingNumber :: Int,
+  samplerDeclaration :: ByteString,
+  samplerDescrSetLayoutBinding :: VkDescr.DescriptorSetLayoutBinding,
+  samplerTextureGetter :: e -> Texture
+}
+
 tellVertexInput :: VertexBinding e -> Pipeline t e Int
 tellVertexInput i = do
-  (n', _, _, _) <- Pipeline . update $
-    \(n, ub, ins, ug) -> (n + 1, ub, M.insert n i ins, ug)
+  (n', _, _, _, _) <- Pipeline . update $
+    \(n, ub, ins, ubs, sbs) -> (n + 1, ub, M.insert n i ins, ubs, sbs)
   return n'
 
 data BufferGetter e = forall a. BufferGetter (e -> Buffer a)
@@ -150,11 +165,11 @@ toPrimitiveStream :: forall e t a b c. (BufferFormat a, BufferFormat b,
 toPrimitiveStream getPrimitiveArray f = do
   let (vB, vBindDescr) =
         makeVertexBinding @a vertexBufferBindingNumber
-          VkEnum.VERTEX_INPUT_RATE_VERTEX
+          Vk.VERTEX_INPUT_RATE_VERTEX
 
       (iB, iBindDescr) =
         makeVertexBinding @b instanceBufferBindingNumber
-          VkEnum.VERTEX_INPUT_RATE_INSTANCE
+          Vk.VERTEX_INPUT_RATE_INSTANCE
 
       ToVertex (Kleisli buildDescrs) (Kleisli buildInDecls) =
         toVertex :: ToVertex c (VertexFormat c)
@@ -170,7 +185,7 @@ toPrimitiveStream getPrimitiveArray f = do
  where
   makeVertexBinding :: forall d. (BufferFormat d)
     => Int
-    -> VkEnum.VertexInputRate
+    -> Vk.VertexInputRate
     -> (d,
         VkPipeline.VertexInputBindingDescription
        )
@@ -217,21 +232,23 @@ compilePipeline pipeline = do
   deviceHandle <- getDeviceHandle
   renderPass <- getRenderPass
 
-  -- TODO replace all this pattern matching with a `runPipeline` function.
-  (fs, (_, _, inputs, uniforms)) <- liftIO
-    . flip runStateT (0, 0, mempty, mempty) . unPipeline
+  -- TODO replace all this pattern matching with a `runPipeline`
+  (fs, (_, _, inputs, uniforms, samplers)) <- liftIO
+    . flip runStateT (0, 0, mempty, mempty, mempty) . unPipeline
     $ pipeline
   let FragmentStream fOut raster = fs
       Rasterization inName vBody glPos vOutDecls fInDecls = raster
       VertexBinding{..} = inputs M.! inName
       vInDecls = vertexInputDeclarations
 
-  let uniformLayoutBindings = M.elems
-        . fmap uniformDescrSetLayoutBinding $ uniforms
+  let uniformDescrSetLayoutBindings = fmap uniformDescrSetLayoutBinding uniforms
+      samplerDescrSetLayoutBindings = fmap samplerDescrSetLayoutBinding samplers
+      descrSetLayoutBindings = M.elems $
+        uniformDescrSetLayoutBindings <> samplerDescrSetLayoutBindings
 
   debug "Creating descriptor set layout."
   let descriptorSetLayoutInfo = Vk.zero {
-    VkDescr.bindings = V.fromList uniformLayoutBindings
+    VkDescr.bindings = V.fromList descrSetLayoutBindings
   }
   descriptorSetLayout <- fromCps $ bracket
     (VkDescr.createDescriptorSetLayout deviceHandle descriptorSetLayoutInfo
@@ -244,8 +261,12 @@ compilePipeline pipeline = do
   let descriptorPoolInfo = Vk.zero {
         VkDescr.maxSets = fromIntegral framesInFlight,
         VkDescr.poolSizes = V.fromList [
-          VkDescr.DescriptorPoolSize VkEnum.DESCRIPTOR_TYPE_UNIFORM_BUFFER
-            (fromIntegral . length $ uniforms)
+          VkDescr.DescriptorPoolSize
+            Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER
+            (fromIntegral . length $ uniforms),
+          VkDescr.DescriptorPoolSize
+            Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+            (fromIntegral . length $ samplers)
         ]
       }
   descriptorPool <- fromCps $ bracket
@@ -265,13 +286,14 @@ compilePipeline pipeline = do
     VkDescr.allocateDescriptorSets deviceHandle descriptorSetInfo
 
   -- Compile the shaders
-  let uniformDecls = M.elems
-        . fmap uniformDeclaration $ uniforms
+  let uniformDecls = fmap uniformDeclaration uniforms
+      samplerDecls = fmap samplerDeclaration samplers
+      uniformDecls' = M.elems $ uniformDecls <> samplerDecls
 
   let vShaderSource = "#version 460\n\n"
         <> vInDecls <> "\n"
         <> vOutDecls <> "\n"
-        <> BS.intercalate "\n" uniformDecls <> "\n"
+        <> BS.intercalate "\n" uniformDecls' <> "\n"
         <> "void main() {\n"
         <> execExprM 2 (do
              _ <- unS vBody
@@ -284,7 +306,7 @@ compilePipeline pipeline = do
   let fShaderSource = "#version 460\n\n"
         <> fInDecls <> "\n"
         <> "layout(location = 0) out vec4 outColor;\n\n"
-        <> BS.intercalate "\n" uniformDecls <> "\n"
+        <> BS.intercalate "\n" uniformDecls' <> "\n"
         <> "void main() {\n"
         <> execExprM 2 (do
              n <- unS fOut
@@ -306,10 +328,10 @@ compilePipeline pipeline = do
   let pipelineCreateInfos = V.singleton . SomeStruct $ Vk.zero {
     VkPipeline.colorBlendState = Just . SomeStruct $ Vk.zero {
       VkPipeline.attachments = V.singleton $ Vk.zero {
-        VkPipeline.colorWriteMask = VkEnum.COLOR_COMPONENT_R_BIT
-          .|. VkEnum.COLOR_COMPONENT_G_BIT
-          .|. VkEnum.COLOR_COMPONENT_B_BIT
-          .|. VkEnum.COLOR_COMPONENT_A_BIT
+        VkPipeline.colorWriteMask = Vk.COLOR_COMPONENT_R_BIT
+          .|. Vk.COLOR_COMPONENT_G_BIT
+          .|. Vk.COLOR_COMPONENT_B_BIT
+          .|. Vk.COLOR_COMPONENT_A_BIT
       },
       VkPipeline.attachmentCount = 1
     },
@@ -325,7 +347,7 @@ compilePipeline pipeline = do
     },
     VkPipeline.layout = layout,
     VkPipeline.multisampleState = Just . SomeStruct $ Vk.zero {
-      VkPipeline.rasterizationSamples = VkEnum.SAMPLE_COUNT_1_BIT
+      VkPipeline.rasterizationSamples = Vk.SAMPLE_COUNT_1_BIT
     },
     VkPipeline.rasterizationState = Just . SomeStruct $ Vk.zero {
       VkPipeline.cullMode = VkPipeline.CULL_MODE_BACK_BIT,
@@ -346,12 +368,12 @@ compilePipeline pipeline = do
     VkPipeline.stageCount = 2,
     VkPipeline.stages = V.fromList . fmap SomeStruct $ [
       Vk.zero {
-        VkPipeline.stage = VkEnum.SHADER_STAGE_VERTEX_BIT,
+        VkPipeline.stage = Vk.SHADER_STAGE_VERTEX_BIT,
         VkPipeline.module' = vertexShaderModule,
         VkPipeline.name = "main"
       },
       Vk.zero {
-        VkPipeline.stage = VkEnum.SHADER_STAGE_FRAGMENT_BIT,
+        VkPipeline.stage = Vk.SHADER_STAGE_FRAGMENT_BIT,
         VkPipeline.module' = fragmentShaderModule,
         VkPipeline.name = "main"
       }
@@ -363,7 +385,7 @@ compilePipeline pipeline = do
     (do (result, ps) <-
           VkPipeline.createGraphicsPipelines deviceHandle Vk.zero
             pipelineCreateInfos Nothing
-        when (result /= VkEnum.SUCCESS) $
+        when (result /= Vk.SUCCESS) $
           warn . printf "Non success result: %s" . show $ result
         return . V.head $ ps
     )
@@ -376,9 +398,11 @@ compilePipeline pipeline = do
     compiledPipeline = vkPipeline,
     compiledPipelineDescriptorSets = descriptorSets,
     compiledPipelineLayout = layout,
+    compiledPipelinePrimitiveArray = vertexPrimitiveArrayGetter,
+    compiledPipelineSamplerInput = M.elems . flip fmap samplers $
+      liftA2 (,) samplerBindingNumber samplerTextureGetter,
     compiledPipelineUniformInput = M.elems . flip fmap uniforms $
-      (,) <$> uniformBindingNumber <*> uniformBufferGetter,
-    compiledPipelinePrimitiveArray = vertexPrimitiveArrayGetter
+      liftA2 (,) uniformBindingNumber uniformBufferGetter
   }
 
 
@@ -424,21 +448,39 @@ runPipeline e CompiledPipeline{..} = do
   deviceHandle <- getDeviceHandle
   frameNumber <- ShadersT $ gets drawStateFrameIndex
 
-  -- Update the current frame's descriptor set to point to the correct buffers.
+  -- Update the current frame's descriptor set to point to the correct buffers
+  -- and textures/samplers.
   let descriptorSet = compiledPipelineDescriptorSets V.! frameNumber
-      descriptorWrites = V.fromList
-        . flip fmap compiledPipelineUniformInput $ \(bn, getter) ->
-            let b = withBufferGetter getter e bufferHandle
-            in SomeStruct $ Vk.zero {
-              VkDSWrite.dstSet = descriptorSet,
-              VkDSWrite.dstBinding = fromIntegral bn,
-              VkDSWrite.descriptorCount = 1,
-              VkDSWrite.descriptorType = VkEnum.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-              VkDSWrite.bufferInfo = V.singleton $ Vk.zero {
-                VkDSBuffer.buffer = b,
-                VkDSBuffer.range = Vk.WHOLE_SIZE
-              }
+      uniformDescriptorWrites = flip fmap compiledPipelineUniformInput $
+        \(bind, getter) ->
+          let b = withBufferGetter getter e bufferHandle
+          in SomeStruct $ Vk.zero {
+            VkDSWrite.dstSet = descriptorSet,
+            VkDSWrite.dstBinding = fromIntegral bind,
+            VkDSWrite.descriptorCount = 1,
+            VkDSWrite.descriptorType = Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            VkDSWrite.bufferInfo = V.singleton $ Vk.zero {
+              VkDSBuffer.buffer = b,
+              VkDSBuffer.range = Vk.WHOLE_SIZE
             }
+          }
+      samplerDescriptorWrites = flip fmap compiledPipelineSamplerInput $
+        \(bind, getter) ->
+          let Texture{..} = getter e
+          in SomeStruct $ Vk.zero {
+            VkDSWrite.dstSet = descriptorSet,
+            VkDSWrite.dstBinding = fromIntegral bind,
+            VkDSWrite.descriptorCount = 1,
+            VkDSWrite.descriptorType =
+              Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            VkDSWrite.imageInfo = V.singleton $ Vk.zero {
+              VkDSImage.imageLayout = Vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+              VkDSImage.imageView = textureImageView,
+              VkDSImage.sampler = textureSampler
+            }
+          }
+      descriptorWrites = V.fromList $
+        uniformDescriptorWrites <> samplerDescriptorWrites
   VkDescr.updateDescriptorSets deviceHandle descriptorWrites V.empty
 
   -- Get the framebuffer for the next image in the swapchain by getting the
@@ -492,7 +534,7 @@ runPipeline e CompiledPipeline{..} = do
       VkCmd.cmdUseRenderPass commandBuffer renderPassBeginInfo
         VkCmd.SUBPASS_CONTENTS_INLINE . (&) ()
     lift $ VkCmd.cmdBindPipeline commandBuffer
-      VkEnum.PIPELINE_BIND_POINT_GRAPHICS pipelineHandle
+      Vk.PIPELINE_BIND_POINT_GRAPHICS pipelineHandle
 
     let viewport = Vk.zero {
       VkPipeline.height = fromIntegral . VkExtent2D.height $ extent,
@@ -507,7 +549,7 @@ runPipeline e CompiledPipeline{..} = do
     VkCmd.cmdSetScissor commandBuffer 0 . V.singleton $ scissor
 
     VkCmd.cmdBindDescriptorSets commandBuffer
-      VkEnum.PIPELINE_BIND_POINT_GRAPHICS
+      Vk.PIPELINE_BIND_POINT_GRAPHICS
       compiledPipelineLayout
       0
       (V.singleton descriptorSet)

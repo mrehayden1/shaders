@@ -52,47 +52,34 @@ instance Arrow ToFragment where
   arr = ToFragment . arr
   first (ToFragment a) = ToFragment (first a)
 
+toFragmentBasic :: ByteString -> ToFragment (S V a) (S F a)
+toFragmentBasic typ = ToFragment
+  (Kleisli $ \a -> do
+    n <- lift $ tellDecl typ
+    out <- get
+    put . S $ do
+      _ <- unS out
+      a' <- unS a
+      tellStatement $ n <> " = " <> a'
+      return n
+    return . S $ return n
+  )
+
 instance FragmentInput (S V Float) where
   type FragmentFormat (S V Float) = S F Float
-  toFragment = ToFragment
-    (Kleisli $ \a -> do
-      n <- lift $ tellDecl "float"
-      out <- get
-      put . S $ do
-        _ <- unS out
-        a' <- unS a
-        tellStatement $ n <> " = " <> a'
-        return n
-      return . S $ return n
-    )
+  toFragment = toFragmentBasic "float"
+
+instance FragmentInput (S V (V2 Float)) where
+  type FragmentFormat (S V (V2 Float)) = S F (V2 Float)
+  toFragment = toFragmentBasic "vec2"
 
 instance FragmentInput (S V (V3 Float)) where
   type FragmentFormat (S V (V3 Float)) = S F (V3 Float)
-  toFragment = ToFragment
-    (Kleisli $ \a -> do
-      n <- lift $ tellDecl "vec3"
-      out <- get
-      put . S $ do
-        _ <- unS out
-        a' <- unS a
-        tellStatement $ n <> " = " <> a'
-        return n
-      return . S $ return n
-    )
+  toFragment = toFragmentBasic "vec3"
 
 instance FragmentInput (S V (V4 Float)) where
   type FragmentFormat (S V (V4 Float)) = S F (V4 Float)
-  toFragment = ToFragment
-    (Kleisli $ \a -> do
-      n <- lift $ tellDecl "vec4"
-      out <- get
-      put . S $ do
-        _ <- unS out
-        a' <- unS a
-        tellStatement $ n <> " = " <> a'
-        return n
-      return . S $ return n
-    )
+  toFragment = toFragmentBasic "vec4"
 
 instance (FragmentInput (S V a), FragmentInput (S V b))
     => FragmentInput (S V a, S V b) where

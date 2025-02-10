@@ -80,12 +80,12 @@ instance Binary TGA where
                   dstOffset = dstRowOffset + 4 * if leftToRight
                     then x
                     else imageWidth - 1 - x
-                  (a, alphaOffset) = if alphaDepth > 0
-                      then (imageBytes `BS.index` srcOffset, 1)
-                      else (1, 0)
-                  r = imageBytes `BS.index` srcOffset + alphaOffset
-                  g = imageBytes `BS.index` srcOffset + alphaOffset + 1
-                  b = imageBytes `BS.index` srcOffset + alphaOffset + 2
+                  b = imageBytes `BS.index` srcOffset
+                  g = imageBytes `BS.index` (srcOffset + 1)
+                  r = imageBytes `BS.index` (srcOffset + 2)
+                  a = if alphaDepth > 0
+                      then imageBytes `BS.index` (srcOffset + 3)
+                      else maxBound
               V.write vector dstOffset       r
               V.write vector (dstOffset + 1) g
               V.write vector (dstOffset + 2) b

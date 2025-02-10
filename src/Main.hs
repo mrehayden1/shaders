@@ -11,7 +11,8 @@ import Text.Printf
 
 import Data.Linear
 import Graphics.Shaders
-import Graphics.Shaders.Internal.Texture
+import Graphics.Shaders.Sampler
+import Graphics.Shaders.Texture
 import Graphics.Shaders.Uniform
 import Window
 
@@ -26,10 +27,14 @@ appLoggingLevel :: LogLevel
 appLoggingLevel = LogTrace
 
 data ShaderEnv = ShaderEnv {
-  envVertices :: PrimitiveArray Triangles (B (V2 Float), B (V3 Float)) (B (V2 Float), B Float),
+  envVertices :: PrimitiveArray
+    Triangles
+    (B (V2 Float), B (V3 Float), B (V2 Float))
+    (B (V2 Float), B Float),
   envColor :: Buffer (Uniform (B (V3 Float))),
   envMatrix :: Buffer (Uniform (B (M44 Float))),
-  envOpacity :: Buffer (Uniform (B Float))
+  envOpacity :: Buffer (Uniform (B Float)),
+  envTexture :: Texture
 }
 
 main :: IO ()
@@ -43,8 +48,6 @@ main = do
     window <- withWindow appName
 
     runShadersT window $ do
-      _ <- loadTexture
-
       timeRef <- liftIO $ newIORef =<< getCurrentTime
 
       let triangleVertices = [
@@ -59,19 +62,20 @@ main = do
           trianglePrimitives = toPrimitiveArray TriangleList triangleVertexArray
 
       let quadVertices = [
-              (V2 (-0.5) (-0.5), V3 1.0 0.0 0.0),
-              (V2 (-0.5)   0.5 , V3 1.0 1.0 1.0),
-              (V2   0.5  (-0.5), V3 0.0 0.0 1.0),
-              (V2   0.5    0.5 , V3 0.0 1.0 0.0)
+              (V2 (-1) (-1), V3 1.0 0.0 0.0, V2 0 0),
+              (V2 (-1)   1 , V3 1.0 1.0 1.0, V2 0 1),
+              (V2   1  (-1), V3 0.0 0.0 1.0, V2 1 0),
+              (V2   1    1 , V3 0.0 1.0 0.0, V2 1 1)
             ]
       quadVertexArray <- toVertexArray <$> withBuffer quadVertices
 
-      let n = 100 :: Int
+      let n = 2 :: Int
       let quadInstances = [0..(n^2 - 1)] <&> \x ->
-            (
-              V2 (fromIntegral (x `mod` n) * (2 / fromIntegral n) - 1)
-                 (fromIntegral (x `div` n) * (2 / fromIntegral n) - 1),
-              1.5 / fromIntegral n
+            let n' = fromIntegral n
+            in (
+              V2 (fromIntegral (x `mod` n) * (2 / n') - 1 + 1 / n')
+                 (fromIntegral (x `div` n) * (2 / n') - 1 + 1 / n'),
+              0.75 / fromIntegral n
             )
       quadInstanceVertexArray <-
         toVertexArray <$> withBuffer quadInstances
@@ -99,25 +103,31 @@ main = do
               V3 1 0 0
             ]
 
-          opacityData = [ 0.5 ]
+          opacityData = [ 1 ]
 
-      shaderEnv <- ShaderEnv (quadPrimitives <> trianglePrimitives)
+      shaderEnv <- ShaderEnv quadPrimitives
         <$> withBuffer redData
         <*> withBuffer matrixData
         <*> withBuffer opacityData
+        <*> loadTexture "texture-alpha.tga"
 
       pipeline <- compilePipeline $ do
-        vertices <- toPrimitiveStream envVertices $ \(pos, color) (t, s)
-          -> (pos, color, t, s)
+        vertices <- toPrimitiveStream envVertices $ \(pos, color, uv) (t, s) ->
+          (pos, color, uv, t, s)
+
         red :: (S V (V3 Float)) <- getUniform envColor
         matrix :: (S V (M44 Float)) <- getUniform envMatrix
-        let vertices' = vertices <&> \(pos, color, t, s) ->
-              let glPos = vec4 (_x pos * s + _x t) (_y pos * s + _y t) 0 1
-              in (glPos, color)
         opacity :: (S F Float) <- getUniform envOpacity
+
+        sampler <- getSampler envTexture
+
+        let vertices' = vertices <&> \(pos, baseColor, uv, t, s) ->
+              let glPos = vec4 (_x pos * s + _x t) (_y pos * s + _y t) 0 1
+              in (glPos, uv)
         fragments <- rasterize vertices'
-        return $ fragments <&> \clr ->
-          vec4 (_r clr) (_g clr) (_b clr) opacity
+        return $ fragments <&> \uv ->
+          let color = texture sampler uv
+          in vec4 (_r color) (_g color) (_b color) opacity
 
       liftIO $ putStrLn "Finished startup."
       liftIO $ putStrLn "Running...\n"
