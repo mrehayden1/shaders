@@ -65,6 +65,8 @@ library:
   - hashtables
   - kan-extensions
   - language-spir-v
+  - lens
+  - linear
   - mtl
   - shaderc
   - time
@@ -84,6 +86,7 @@ executables:
     - -with-rtsopts=-N
     dependencies:
     - kan-extensions
+    - linear
     - mtl
     - shaders
     - time

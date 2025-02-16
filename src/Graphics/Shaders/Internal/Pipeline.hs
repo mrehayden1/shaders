@@ -41,6 +41,7 @@ import qualified Language.SpirV.Internal as SpirV
 import qualified Language.SpirV.ShaderKind as SpirV
 import qualified Language.SpirV.Shaderc as SpirV
 import qualified Language.SpirV.Shaderc.CompileOptions as SpirV
+import Linear
 import Text.Printf
 import qualified Vulkan.Core10.APIConstants as Vk
 import qualified Vulkan.Core10.CommandBuffer as VkCmd hiding (
@@ -70,7 +71,6 @@ import Vulkan.CStruct.Extends (SomeStruct(..))
 import qualified Vulkan.Zero as Vk
 
 import Control.Monad.State.Extra
-import Data.Linear
 import Graphics.Shaders.Base
 import Graphics.Shaders.Internal.Buffer
 import Graphics.Shaders.Internal.DeclM
@@ -225,7 +225,7 @@ rasterize (PrimitiveStream inName (glPos, vOut)) = do
 
 compilePipeline :: forall e m t. (MonadAsyncException m, MonadLogger m,
   BaseTopology t)
-  => Pipeline t e (FragmentStream (S F (V4 Float)))
+  => Pipeline t e (FragmentStream (V4 (S F Float)))
   -> ShadersT m (CompiledPipeline e)
 compilePipeline pipeline = do
   framesInFlight <- ShadersT . asks $ V.length . graphicsFrames
@@ -290,28 +290,40 @@ compilePipeline pipeline = do
       samplerDecls = fmap samplerDeclaration samplers
       uniformDecls' = M.elems $ uniformDecls <> samplerDecls
 
+  vShaderBody <- liftIO . execExprM 2 $ do
+    _ <- unS vBody
+    let V4 x y z w = glPos
+    x' <- unS x
+    y' <- unS y
+    z' <- unS z
+    w' <- unS w
+    tellStatement $ "gl_Position = vec4("
+      <> BS.intercalate ", " [x', y', z', w'] <> ")"
+
   let vShaderSource = "#version 460\n\n"
         <> vInDecls <> "\n"
         <> vOutDecls <> "\n"
         <> BS.intercalate "\n" uniformDecls' <> "\n"
         <> "void main() {\n"
-        <> execExprM 2 (do
-             _ <- unS vBody
-             n <- unS glPos
-             tellStatement $ "gl_Position = " <> n
-           )
+        <> vShaderBody
         <> "}"
   vertexShaderModule <- createShader deviceHandle Vertex vShaderSource
+
+  fShaderBody <- liftIO . execExprM 2 $ do
+    let V4 r g b a = fOut
+    r' <- unS r
+    g' <- unS g
+    b' <- unS b
+    a' <- unS a
+    tellStatement $ "outColor = vec4("
+      <> BS.intercalate ", " [r', g', b', a'] <> ")"
 
   let fShaderSource = "#version 460\n\n"
         <> fInDecls <> "\n"
         <> "layout(location = 0) out vec4 outColor;\n\n"
         <> BS.intercalate "\n" uniformDecls' <> "\n"
         <> "void main() {\n"
-        <> execExprM 2 (do
-             n <- unS fOut
-             tellStatement $ "outColor = " <> n
-           )
+        <> fShaderBody
         <> "}"
   fragmentShaderModule <- createShader deviceHandle Fragment fShaderSource
 
@@ -409,6 +421,10 @@ compilePipeline pipeline = do
 data ShaderStage = Vertex | Fragment
  deriving Show
 
+shaderFileExt :: ShaderStage -> ByteString
+shaderFileExt Fragment = ".frag"
+shaderFileExt Vertex   = ".vert"
+
 createShader :: (MonadAsyncException m, MonadLogger m)
   => VkDevice.Device
   -> ShaderStage
@@ -437,7 +453,7 @@ createShader device stage code = do
     => IO ByteString
   compile = do
     SpirV.S compiledCode :: SpirV.S s <-
-      SpirV.compile code "" "main" (def :: SpirV.C ())
+      SpirV.compile code ("<no name>" <> shaderFileExt stage) "main" (def :: SpirV.C ())
     return compiledCode
 
 runPipeline :: forall m e. (MonadIO m, MonadLogger m)

@@ -28,7 +28,6 @@ library
       Control.Monad.State.Extra
       Control.Monad.Trans.Maybe.Extra
       Data.Bits.Extra
-      Data.Linear
       Graphics.Shaders
       Graphics.Shaders.Base
       Graphics.Shaders.Buffer
@@ -95,6 +94,8 @@ library
     , hashtables
     , kan-extensions
     , language-spir-v
+    , lens
+    , linear
     , mtl
     , shaderc
     , time
@@ -134,6 +135,7 @@ executable example
   build-depends:
       base >=4.7 && <5
     , kan-extensions
+    , linear
     , mtl
     , shaders
     , time

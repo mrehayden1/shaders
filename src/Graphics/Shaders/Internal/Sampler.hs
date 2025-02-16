@@ -2,7 +2,7 @@ module Graphics.Shaders.Internal.Sampler (
   getSampler,
   Sampler(..),
 
-  texture
+  sample
 ) where
 
 import Control.Monad.IO.Class
@@ -10,6 +10,7 @@ import Control.Monad.State
 import Data.Bits
 import Data.ByteString.Char8 as BS
 import qualified Data.Map as M
+import Linear
 import System.Mem.StableName
 import Vulkan.Core10.DescriptorSet as VkDS
 import Vulkan.Core10.DescriptorSet as VkDSLayout (
@@ -18,7 +19,6 @@ import Vulkan.Core10.Enums as Vk
 import Vulkan.Zero as Vk
 
 import Control.Monad.State.Extra
-import Data.Linear
 import Graphics.Shaders.Internal.Expr
 import Graphics.Shaders.Internal.Pipeline
 import Graphics.Shaders.Internal.Texture
@@ -29,7 +29,7 @@ getSampler :: (e -> Texture) -> Pipeline t e (S x Sampler)
 getSampler getter = do
   -- Hash the getter StableName and look it up in the cache so we don't keep
   -- rebinding the uniform it's for.
-  hash <- liftIO $ hashStableName <$> makeStableName getter
+  hash <- liftIO . fmap hashStableName . makeStableName $! getter
   bindings <- Pipeline . gets $ \(_, _, _, _, sbs) -> sbs
   let hasBinding = hash `M.member` bindings
 
@@ -70,10 +70,11 @@ getSampler getter = do
   return . S . return $ "un" <> bind'
 
 
--- Texture sampler shader expressions
-
-texture :: S x Sampler -> S x (V2 Float) -> S x (V4 Float)
-texture s p = S $ do
-  s' <- unS s
-  p' <- unS p
-  tellAssignment "vec4" $ "texture(" <> s' <> ", " <> p' <> ")"
+-- Texture sampler shader expressions, i.e. the GLSL `texture` function.
+sample :: S x Sampler -> V2 (S x Float) -> V4 (S x Float)
+sample s (V2 u v) =
+  toV4S . S $ do
+    s' <- unS s
+    u' <- unS u
+    v' <- unS v
+    return $ "texture(" <> s' <> ", vec2(" <> u' <> ", " <> v' <> "))"
