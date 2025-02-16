@@ -9,4 +9,9 @@ An eDSL for GPU progamming based on the Vulkan API inspired by GPipe.
 To build GHC will need to link against the following system libraries.
 
 - vulkan
+- glslang
 - glfw3
+
+## Dev dependencies
+
+- LunarG Vulkan SDK
