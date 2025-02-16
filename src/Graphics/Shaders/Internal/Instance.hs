@@ -25,8 +25,6 @@ import Vulkan.Zero as Vk
 
 import Graphics.Shaders.Logger.Class
 
--- ["VK_LAYER_RENDERDOC_Capture","VK_LAYER_NV_optimus","VK_LAYER_MESA_device_select","VK_LAYER_KHRONOS_validation","VK_LAYER_KHRONOS_synchronization2","VK_LAYER_LUNARG_gfxreconstruct","VK_LAYER_MESA_overlay","VK_LAYER_LUNARG_screenshot","VK_LAYER_INTEL_nullhw","VK_LAYER_LUNARG_monitor","VK_LAYER_LUNARG_crash_diagnostic","VK_LAYER_KHRONOS_profiles","VK_LAYER_KHRONOS_shader_object","VK_LAYER_LUNARG_api_dump"]
-
 withInstance :: (MonadAsyncException m, MonadLogger m)
   => Codensity m Vk.Instance
 withInstance = do
@@ -66,8 +64,10 @@ withInstance = do
       -- Window extensions *should* always contain VK_KHR_surface, but we'll
       -- add it anyway since we'll need it later.
       let extraInstanceExtensions = [
-              VkSurface.KHR_SURFACE_EXTENSION_NAME,
+              VkSurface.KHR_SURFACE_EXTENSION_NAME
+            ] <> [
               VkValidation.EXT_VALIDATION_FEATURES_EXTENSION_NAME
+            | logLevel <= LogTrace
             ]
           requiredExtensions = V.fromList
             . (extraInstanceExtensions `union`) $ windowInstanceExtensions
@@ -76,6 +76,7 @@ withInstance = do
             VkInit.enabledExtensionNames = requiredExtensions,
             VkInit.enabledLayerNames = V.fromList [
                 "VK_LAYER_KHRONOS_validation"
+              | logLevel <= LogTrace
               ]
           }
 
