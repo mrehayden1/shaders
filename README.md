@@ -1,12 +1,6 @@
-# Bagatelle
+# Shaders
 
-A simple game of cards...
-
-## Potential Titles
-
-- Bagatelle (working)
-- Pagliacci
-- Caracal
+An eDSL for GPU progamming based on the Vulkan API inspired by GPipe.
 
 # Dependencies
 
