@@ -109,25 +109,24 @@ main = do
         <$> withBuffer redData
         <*> withBuffer matrixData
         <*> withBuffer opacityData
-        <*> loadTexture "texture-alpha.tga"
+        <*> loadTexture "examples/texture-alpha.tga"
 
       pipeline <- compilePipeline $ do
         vertices <- toPrimitiveStream envVertices $ \(pos, color, uv) (t, s) ->
           (pos, color, uv, t, s)
 
-        red :: (S V (V3 Float)) <- getUniform envColor
-        matrix :: (S V (M44 Float)) <- getUniform envMatrix
-        opacity :: (S F Float) <- getUniform envOpacity
+        red :: S V (V3 Float) <- getUniform envColor
+        matrix :: S V (M44 Float) <- getUniform envMatrix
+        opacity :: S F Float <- getUniform envOpacity
 
         sampler <- getSampler envTexture
 
-        let vertices' = vertices <&> \(pos, baseColor, uv, t, s) ->
-              let glPos = vec4 (_x pos * s + _x t) (_y pos * s + _y t) 0 1
+        let vertices' = vertices <&> \(p, baseColor, uv, t, s) ->
+              let s' = s * 1.1
+                  glPos = vec4 (_x p * s' + _x t) (_y p * s' + _y t) 0 1
               in (glPos, uv)
         fragments <- rasterize vertices'
-        return $ fragments <&> \uv ->
-          let color = texture sampler uv
-          in vec4 (_r color) (_g color) (_b color) opacity
+        return $ fragments <&> \uv -> texture sampler uv
 
       liftIO $ putStrLn "Finished startup."
       liftIO $ putStrLn "Running...\n"

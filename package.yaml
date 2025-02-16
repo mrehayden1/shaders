@@ -1,6 +1,6 @@
-name:                bagatelle
+name:                shaders
 version:             0.1.0.0
-github:              "mrehayden1/bagatelle"
+github:              "mrehayden1/shaders"
 license:             OtherLicense
 author:              "Matthew Hayden"
 maintainer:          "mrehayden@gmail.com"
@@ -37,7 +37,7 @@ default-extensions:
 # To avoid duplicated efforts in documentation and dealing with the
 # complications of embedding Haddock markup inside cabal files, it is
 # common to point users to the README.md file.
-description:         Please see the README on GitHub at <https://github.com/mrehayden1/bagatelle#readme>
+description:         Please see the README on GitHub at <https://github.com/mrehayden1/shaders#readme>
 
 dependencies:
 - base >= 4.7 && < 5
@@ -53,28 +53,37 @@ ghc-options:
 - -Wpartial-fields
 - -Wredundant-constraints
 
+library:
+  source-dirs:         src
+  dependencies:
+  - GLFW-b
+  - binary
+  - bytestring
+  - containers
+  - data-default
+  - exception-transformers
+  - hashtables
+  - kan-extensions
+  - language-spir-v
+  - mtl
+  - shaderc
+  - time
+  - transformers
+  - utf8-string
+  - vector
+  - vulkan
+  - witherable
+
 executables:
-  bagatelle:
-    main:                Main.hs
-    source-dirs:         src
+  example:
+    main:        Main.hs
+    source-dirs: examples
     ghc-options:
     - -threaded
     - -rtsopts
     - -with-rtsopts=-N
     dependencies:
-    - GLFW-b
-    - binary
-    - bytestring
-    - containers
-    - data-default
-    - exception-transformers
     - kan-extensions
-    - language-spir-v
     - mtl
-    - shaderc
+    - shaders
     - time
-    - transformers
-    - utf8-string
-    - vector
-    - vulkan
-    - witherable
