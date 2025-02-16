@@ -14,6 +14,7 @@ import Control.Monad.Writer
 import Data.Bits
 import Data.ByteString.Char8 as BS
 import qualified Data.Map as M
+import Linear
 import System.Mem.StableName
 import Vulkan.Core10.DescriptorSet as VkDS
 import Vulkan.Core10.DescriptorSet as VkDSLayout (
@@ -22,7 +23,6 @@ import Vulkan.Core10.Enums as Vk
 import Vulkan.Zero as Vk
 
 import Control.Monad.State.Extra
-import Data.Linear
 import Graphics.Shaders.Internal.Buffer
 import Graphics.Shaders.Internal.Expr
 import Graphics.Shaders.Internal.Pipeline
@@ -51,7 +51,7 @@ getUniform :: forall t e a x. UniformInput a
 getUniform getter = do
   -- Hash the getter StableName and look it up in the cache so we don't keep
   -- rebinding the uniform it's for.
-  hash <- liftIO $ hashStableName <$> makeStableName getter
+  hash <- liftIO . fmap hashStableName . makeStableName $! getter
   bindings <- Pipeline . gets $ \(_, _, _, ubs, _) -> ubs
   let hasBinding = hash `M.member` bindings
 
@@ -111,25 +111,35 @@ instance UniformInput (B Float) where
   type UniformFormat (B Float) x = S x Float
   toUniform = toUniformField "float"
 
-instance UniformInput (B (V2 Float)) where
-  type UniformFormat (B (V2 Float)) x = S x (V2 Float)
-  toUniform = toUniformField "vec2"
 
-instance UniformInput (B (V3 Float)) where
-  type UniformFormat (B (V3 Float)) x = S x (V3 Float)
-  toUniform = toUniformField "vec3"
+instance UniformInput (V0 a) where
+  type UniformFormat (V0 a) x = V0 (UniformFormat a x)
+  toUniform = proc ~V0 -> returnA -< V0
 
-instance UniformInput (B (V4 Float)) where
-  type UniformFormat (B (V4 Float)) x = S x (V4 Float)
-  toUniform = toUniformField "vec4"
+instance UniformInput a => UniformInput (V1 a) where
+  type UniformFormat (V1 a) x = V1 (UniformFormat a x)
+  toUniform = proc ~(V1 a) -> do
+    a' <- toUniform -< a
+    returnA -< V1 a'
 
-instance UniformInput (B (M33 Float)) where
-  type UniformFormat (B (M33 Float)) x = S x (M33 Float)
-  toUniform = toUniformField "mat3"
+instance UniformInput a => UniformInput (V2 a) where
+  type UniformFormat (V2 a) x = V2 (UniformFormat a x)
+  toUniform = proc ~(V2 a b) -> do
+    (a', b') <- toUniform -< (a, b)
+    returnA -< V2 a' b'
 
-instance UniformInput (B (M44 Float)) where
-  type UniformFormat (B (M44 Float)) x = S x (M44 Float)
-  toUniform = toUniformField "mat4"
+instance UniformInput a => UniformInput (V3 a) where
+  type UniformFormat (V3 a) x = V3 (UniformFormat a x)
+  toUniform = proc ~(V3 a b c) -> do
+    (a', b', c') <- toUniform -< (a, b, c)
+    returnA -< V3 a' b' c'
+
+instance UniformInput a => UniformInput (V4 a) where
+  type UniformFormat (V4 a) x = V4 (UniformFormat a x)
+  toUniform = proc ~(V4 a b c d) -> do
+    (a', b', c', d') <- toUniform -< (a, b, c, d)
+    returnA -< V4 a' b' c' d'
+
 
 instance (UniformInput a, UniformInput b) => UniformInput (a, b) where
   type UniformFormat (a, b) x = (UniformFormat a x, UniformFormat b x)

@@ -25,6 +25,7 @@ import Data.Bits
 import Data.Word
 import Foreign.Ptr
 import Foreign.Storable
+import Linear
 import qualified Vulkan.Core10.Buffer as VkBuffer
 import qualified Vulkan.Core10.CommandBuffer as VkCmdBuffer
 import qualified Vulkan.Core10.CommandBufferBuilding as VkCmd
@@ -40,7 +41,6 @@ import Vulkan.CStruct.Extends
 import qualified Vulkan.Zero as Vk
 
 import Data.Bits.Extra
-import Data.Linear
 import Graphics.Shaders.Base
 import Graphics.Shaders.Exception
 import Graphics.Shaders.Logger.Class
@@ -257,10 +257,10 @@ alignWhenStd140 a =
  where
   calcPadding x = do
     alignMode <- ask
-    offset <- get
     pad <-
       if alignMode == AlignStd140
         then do
+          offset <- get
           let p = (a - (offset `mod` a)) `mod` a
           put $ offset + p
           return p
@@ -268,8 +268,8 @@ alignWhenStd140 a =
     tell [pad]
     return x
   alignBufferWriter x = do
-    (ptr, pad : pads) <- get
-    put (ptr `plusPtr` pad, pads)
+    (ptr, pads) <- get
+    put (ptr `plusPtr` head pads, tail pads)
     return x
   alignValueProd x = do
     (pads, offset) <- get
@@ -289,7 +289,7 @@ instance Arrow ToBuffer where
   arr f = ToBuffer (arr f) (arr f) (arr f) Align4Byte
   first (ToBuffer a b c d) = ToBuffer (first a) (first b) (first c) d
 
--- Buffered value
+-- Atomic buffered values
 data B a = B {
   bBinding :: Int,
   bOffset :: Int
@@ -312,7 +312,6 @@ instance BufferFormat (B ()) where
       bOffset = 0
     }
 
--- Scalars are always std140 aligned since all our scalars are 4 bytes wide.
 toBufferUnaligned :: forall a. Storable a => ToBuffer a (B a)
 toBufferUnaligned =
   ToBuffer
@@ -343,73 +342,48 @@ toBufferUnaligned =
       bOffset = offset
     }
 
+
 instance BufferFormat (B Float) where
   type HostFormat (B Float) = Float
+  toBuffer = toBufferUnaligned
+
+instance BufferFormat (B Word16) where
+  type HostFormat (B Word16) = Word16
   toBuffer = toBufferUnaligned
 
 instance BufferFormat (B Word32) where
   type HostFormat (B Word32) = Word32
   toBuffer = toBufferUnaligned
 
-castB :: B a -> B b
-castB B{..} = B{ bBinding = bBinding, bOffset = bOffset }
 
-instance BufferFormat (B (V2 Float)) where
-  type HostFormat (B (V2 Float)) = V2 Float
+instance BufferFormat (V0 a) where
+  type HostFormat (V0 a) = V0 (HostFormat a)
+  toBuffer = proc ~V0 -> returnA -< V0
+
+instance BufferFormat a => BufferFormat (V1 a) where
+  type HostFormat (V1 a) = V1 (HostFormat a)
+  toBuffer = proc ~(V1 a) -> do
+    a' <- toBuffer -< a
+    returnA -< V1 a'
+
+instance BufferFormat a => BufferFormat (V2 a) where
+  type HostFormat (V2 a) = V2 (HostFormat a)
   toBuffer = proc ~(V2 a b) -> do
-    alignWhenStd140 (2 * sz) -< () -- align to 2N per std140
-    a' <- toBufferUnaligned -< a
-    _ <- toBufferUnaligned -< b
-    returnA -< castB a'
-   where
-    sz = sizeOf (undefined :: Float)
+    (a', b') <- toBuffer -< (a, b)
+    returnA -< V2 a' b'
 
-instance BufferFormat (B (V3 Float)) where
-  type HostFormat (B (V3 Float)) = V3 Float
+instance BufferFormat a => BufferFormat (V3 a) where
+  type HostFormat (V3 a) = V3 (HostFormat a)
   toBuffer = proc ~(V3 a b c) -> do
-    alignWhenStd140 (4 * sz) -< () -- align to 4N per std140
-    a' <- toBufferUnaligned -< a
-    _ <- toBufferUnaligned -< b
-    _ <- toBufferUnaligned -< c
-    returnA -< castB a'
-   where
-    sz = sizeOf (undefined :: Float)
+    (a', b', c') <- toBuffer -< (a, b, c)
+    returnA -< V3 a' b' c'
 
-instance BufferFormat (B (V4 Float)) where
-  type HostFormat (B (V4 Float)) = V4 Float
+instance BufferFormat a => BufferFormat (V4 a) where
+  type HostFormat (V4 a) = V4 (HostFormat a)
   toBuffer = proc ~(V4 a b c d) -> do
-    alignWhenStd140 (4 * sz) -< () -- align to 4N per std140
-    a' <- toBufferUnaligned -< a
-    _ <- toBufferUnaligned -< b
-    _ <- toBufferUnaligned -< c
-    _ <- toBufferUnaligned -< d
-    returnA -< castB a'
-   where
-    sz = sizeOf (undefined :: Float)
+    (a', b', c', d') <- toBuffer -< (a, b, c, d)
+    returnA -< V4 a' b' c' d'
 
-instance BufferFormat (B (M33 Float)) where
-  type HostFormat (B (M33 Float)) = M33 Float
-  toBuffer = proc ~(M33 a b c) -> do
-    a' <- buffer -< a
-    _ <- buffer -< b
-    _ <- buffer -< c
-    -- ensure the next member is 4N aligned per std140
-    alignWhenStd140 (4 * sz) -< ()
-    returnA -< castB a'
-   where
-    sz = sizeOf (undefined :: Float)
-    buffer = toBuffer :: ToBuffer (V3 Float) (B (V3 Float))
-
-instance BufferFormat (B (M44 Float)) where
-  type HostFormat (B (M44 Float)) = M44 Float
-  toBuffer = proc ~(M44 a b c d) -> do
-    a' <- buffer -< a
-    _ <- buffer -< b
-    _ <- buffer -< c
-    _ <- buffer -< d
-    returnA -< castB a'
-   where
-    buffer = toBuffer :: ToBuffer (V4 Float) (B (V4 Float))
 
 instance (BufferFormat a, BufferFormat b) => BufferFormat (a, b) where
   type HostFormat (a, b) = (HostFormat a, HostFormat b)

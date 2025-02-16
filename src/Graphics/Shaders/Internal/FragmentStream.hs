@@ -13,12 +13,12 @@ import Control.Arrow
 import Control.Category
 import Control.Monad.State
 import Data.ByteString (ByteString)
+import Linear
 
-import Data.Linear
 import Graphics.Shaders.Internal.DeclM
 import Graphics.Shaders.Internal.Expr
 
-type GLPos = S V (V4 Float)
+type GLPos = V4 (S V Float)
 
 data FragmentStream a =
   FragmentStream
@@ -69,59 +69,68 @@ instance FragmentInput (S V Float) where
   type FragmentFormat (S V Float) = S F Float
   toFragment = toFragmentBasic "float"
 
-instance FragmentInput (S V (V2 Float)) where
-  type FragmentFormat (S V (V2 Float)) = S F (V2 Float)
-  toFragment = toFragmentBasic "vec2"
 
-instance FragmentInput (S V (V3 Float)) where
-  type FragmentFormat (S V (V3 Float)) = S F (V3 Float)
-  toFragment = toFragmentBasic "vec3"
+instance FragmentInput (V0 a) where
+  type FragmentFormat (V0 a) = V0 (FragmentFormat a)
+  toFragment = proc ~V0 -> returnA -< V0
 
-instance FragmentInput (S V (V4 Float)) where
-  type FragmentFormat (S V (V4 Float)) = S F (V4 Float)
-  toFragment = toFragmentBasic "vec4"
+instance FragmentInput a => FragmentInput (V1 a) where
+  type FragmentFormat (V1 a) = V1 (FragmentFormat a)
+  toFragment = proc ~(V1 a) -> do
+    a' <- toFragment -< a
+    returnA -< V1 a'
 
-instance (FragmentInput (S V a), FragmentInput (S V b))
-    => FragmentInput (S V a, S V b) where
-  type FragmentFormat (S V a, S V b) =
-    (FragmentFormat (S V a), FragmentFormat (S V b))
+instance FragmentInput a => FragmentInput (V2 a) where
+  type FragmentFormat (V2 a) = V2 (FragmentFormat a)
+  toFragment = proc ~(V2 a b) -> do
+    (a', b') <- toFragment -< (a, b)
+    returnA -< V2 a' b'
+
+instance FragmentInput a => FragmentInput (V3 a) where
+  type FragmentFormat (V3 a) = V3 (FragmentFormat a)
+  toFragment = proc ~(V3 a b c) -> do
+    (a', b', c') <- toFragment -< (a, b, c)
+    returnA -< V3 a' b' c'
+
+instance FragmentInput a => FragmentInput (V4 a) where
+  type FragmentFormat (V4 a) = V4 (FragmentFormat a)
+  toFragment = proc ~(V4 a b c d) -> do
+    (a', b', c', d') <- toFragment -< (a, b, c, d)
+    returnA -< V4 a' b' c' d'
+
+
+instance (FragmentInput a, FragmentInput b)
+    => FragmentInput (a, b) where
+  type FragmentFormat (a, b) =
+    (FragmentFormat a, FragmentFormat b)
   toFragment = proc ~(a, b) -> do
     a' <- toFragment -< a
     b' <- toFragment -< b
     returnA -< (a', b')
 
-instance (FragmentInput (S V a), FragmentInput (S V b), FragmentInput (S V c))
-    => FragmentInput (S V a, S V b, S V c) where
-  type FragmentFormat (S V a, S V b, S V c) =
-    (FragmentFormat (S V a), FragmentFormat (S V b), FragmentFormat (S V c))
+instance (FragmentInput a, FragmentInput b, FragmentInput c)
+    => FragmentInput (a, b, c) where
+  type FragmentFormat (a, b, c) =
+    (FragmentFormat a, FragmentFormat b, FragmentFormat c)
   toFragment = proc ~(a, b, c) -> do
-    a' <- toFragment -< a
-    b' <- toFragment -< b
+    (a', b') <- toFragment -< (a, b)
     c' <- toFragment -< c
     returnA -< (a', b', c')
 
-instance (FragmentInput (S V a), FragmentInput (S V b), FragmentInput (S V c),
-  FragmentInput (S V d))
-    => FragmentInput (S V a, S V b, S V c, S V d) where
-  type FragmentFormat (S V a, S V b, S V c, S V d) = (FragmentFormat (S V a),
-    FragmentFormat (S V b), FragmentFormat (S V c), FragmentFormat (S V d))
+instance (FragmentInput a, FragmentInput b, FragmentInput c, FragmentInput d)
+    => FragmentInput (a, b, c, d) where
+  type FragmentFormat (a, b, c, d) =
+    (FragmentFormat a, FragmentFormat b, FragmentFormat c, FragmentFormat d)
   toFragment = proc ~(a, b, c, d) -> do
-    a' <- toFragment -< a
-    b' <- toFragment -< b
-    c' <- toFragment -< c
+    (a', b', c') <- toFragment -< (a, b, c)
     d' <- toFragment -< d
     returnA -< (a', b', c', d')
 
-instance (FragmentInput (S V a), FragmentInput (S V b), FragmentInput (S V c),
-  FragmentInput (S V d), FragmentInput (S V e))
-    => FragmentInput (S V a, S V b, S V c, S V d, S V e) where
-  type FragmentFormat (S V a, S V b, S V c, S V d, S V e) =
-    (FragmentFormat (S V a), FragmentFormat (S V b), FragmentFormat (S V c),
-     FragmentFormat (S V d), FragmentFormat (S V e))
+instance (FragmentInput a, FragmentInput b, FragmentInput c, FragmentInput d, FragmentInput e)
+    => FragmentInput (a, b, c, d, e) where
+  type FragmentFormat (a, b, c, d, e) =
+    (FragmentFormat a, FragmentFormat b, FragmentFormat c, FragmentFormat d, FragmentFormat e)
   toFragment = proc ~(a, b, c, d, e) -> do
-    a' <- toFragment -< a
-    b' <- toFragment -< b
-    c' <- toFragment -< c
-    d' <- toFragment -< d
+    (a', b', c', d') <- toFragment -< (a, b, c, d)
     e' <- toFragment -< e
     returnA -< (a', b', c', d', e')

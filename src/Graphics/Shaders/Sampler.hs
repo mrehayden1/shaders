@@ -2,7 +2,7 @@ module Graphics.Shaders.Sampler (
   getSampler,
   Sampler,
 
-  texture
+  sample
 ) where
 
 import Graphics.Shaders.Internal.Sampler
