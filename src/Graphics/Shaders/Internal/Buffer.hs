@@ -1,5 +1,7 @@
 module Graphics.Shaders.Internal.Buffer (
   Buffer(..),
+  bufferHandle,
+  BufferAccess(..),
 
   B(..),
   B2(..),
@@ -11,22 +13,29 @@ module Graphics.Shaders.Internal.Buffer (
   BufferFormat(..),
   ToBuffer(..),
 
-  withBuffer,
-  withBuffer',
-  allocateMemory,
+  createBuffer,
+  createBufferReadOnly,
+
+  destroyBuffer,
+
+  writeBuffer,
+
+  createBuffer',
+
   withOneTimeSubmitCommandBuffer
 ) where
 
 import Prelude hiding ((.), id)
 import Control.Arrow
 import Control.Category
-import Control.Monad
 import Control.Monad.Exception
 import Control.Monad.Reader
 import Control.Monad.State
+import Control.Monad.Trans.Resource
 import Control.Monad.Writer
 import qualified Data.Vector as V
 import Data.Bits
+import Data.IORef
 import Data.Word
 import Foreign.Ptr
 import Foreign.Storable
@@ -45,23 +54,48 @@ import qualified Vulkan.Core10.Queue as VkQueue
 import Vulkan.CStruct.Extends
 import qualified Vulkan.Zero as Vk
 
-import Data.Bits.Extra
 import Graphics.Shaders.Base
-import Graphics.Shaders.Exception
 import Graphics.Shaders.Logger.Class
+import Graphics.Shaders.Internal.Memory
 
+-- BufferAccess - A phantom type that determines the usage of a buffer.
+--
+-- BufferReadOnly
+--  Stored in fast GPU accesible memory and only written to on initialization
+-- BufferReadWrite
+--  Stored in CPU accessible memory. The buffer memory is also duplicated into
+--  sub-buffers, one per frame, so CPU/GPU synchronisation is unnecessary
+--  between writes.
+data BufferAccess = ReadOnly | ReadWrite
 
-data Buffer a = Buffer {
-  bufferHandle :: Vk.Buffer,
-  bufferLength :: Int
-}
+data Buffer (r :: BufferAccess) a where
+  BufferReadOnly :: {
+      rBufferHandle :: Vk.Buffer,
+      rBufferNumElems :: Int,
+      rBufferReleaseKeys :: (ReleaseKey, ReleaseKey)
+    } -> Buffer 'ReadOnly a
+  BufferWritable :: {
+      -- Points to the offset of the current front sub-suffer.
+      wBufferFrontSubBuffer :: IORef Int,
+      wBufferHandle :: Vk.Buffer,
+      wBufferMemory :: Vk.DeviceMemory,
+      wBufferNumElems :: Int,
+      wBufferPads :: [Int],
+      wBufferReleaseKeys :: (ReleaseKey, ReleaseKey),
+      wBufferStride :: Int,
+      wBufferWriter :: HostFormat a -> BufferWriterM a
+    } -> Buffer 'ReadWrite a
 
-withBuffer :: forall a m. (MonadAsyncException m, MonadLogger m,
-    BufferFormat a)
-  => [HostFormat a]
-  -> ShadersT m (Buffer a)
-withBuffer vertices = do
-  deviceHandle <- getDeviceHandle
+bufferHandle :: Buffer r a -> Vk.Buffer
+bufferHandle (BufferReadOnly h _ _          ) = h
+bufferHandle (BufferWritable _ h _ _ _ _ _ _) = h
+
+-- Allocate a writable buffer with `l` elements of type `a`
+createBuffer :: forall m a. (MonadAsyncException m, MonadLogger m, BufferFormat a)
+    => Int -> ShadersT m (Buffer 'ReadWrite a)
+createBuffer numVertices = do
+  memoryProperties <- getDeviceMemoryProperties
+  numFrames <- ShadersT $ asks (V.length . graphicsFrames)
 
   let ToBuffer (Kleisli calcAlign) (Kleisli bufferer) _ alignMode
         = toBuffer :: ToBuffer (HostFormat a) a
@@ -69,50 +103,105 @@ withBuffer vertices = do
   let ((_, pads), stride) = flip runState 0 . runWriterT
                               . flip runReaderT alignMode
                               . calcAlign $ undefined
-      numElems = length vertices
-      bufferSize = fromIntegral stride * fromIntegral numElems
+      bufferSize = fromIntegral $ stride * numVertices * numFrames
 
-  -- Create a vertex buffer
-  debug "Creating destination buffer."
+  debug "Creating writable buffer."
   let vertexBufferUsageFlags = VkBuffer.BUFFER_USAGE_TRANSFER_DST_BIT
         .|. VkBuffer.BUFFER_USAGE_VERTEX_BUFFER_BIT
       vertexBufferPropertyFlags = Vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT
-  (vertexBuffer, _) <- withBuffer' bufferSize vertexBufferUsageFlags
-    vertexBufferPropertyFlags
+        .|. Vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT
+  (buffer, bufferReleaseKey, memory, memoryReleaseKey)
+    <- createBuffer' memoryProperties bufferSize vertexBufferUsageFlags
+         vertexBufferPropertyFlags
+
+  frontSubBufferRef <- liftIO $ newIORef 0
+
+  return $ BufferWritable {
+    wBufferFrontSubBuffer = frontSubBufferRef,
+    wBufferHandle = buffer,
+    wBufferMemory = memory,
+    wBufferNumElems = numVertices,
+    wBufferPads = pads,
+    wBufferReleaseKeys = (bufferReleaseKey, memoryReleaseKey),
+    wBufferStride = stride,
+    wBufferWriter = bufferer
+  }
+
+createBufferReadOnly :: forall a m. (MonadAsyncException m, MonadLogger m,
+    BufferFormat a)
+  => [HostFormat a]
+  -> ShadersT m (Buffer 'ReadOnly a)
+createBufferReadOnly vertices = do
+  deviceHandle <- getDeviceHandle
+  memoryProperties <- getDeviceMemoryProperties
+  queueHandle <- getQueueHandle
+  commandPool <- getCommandPool
+
+  let ToBuffer (Kleisli calcAlign) (Kleisli bufferer) _ alignMode
+        = toBuffer :: ToBuffer (HostFormat a) a
+
+  let ((_, pads), stride) = flip runState 0 . runWriterT
+                              . flip runReaderT alignMode
+                              . calcAlign $ undefined
+      numVertices = length vertices
+      bufferSize = fromIntegral stride * fromIntegral numVertices
+
+  -- Create a vertex buffer
+  debug "Creating read only buffer."
+  let vertexBufferUsageFlags = VkBuffer.BUFFER_USAGE_TRANSFER_DST_BIT
+        .|. VkBuffer.BUFFER_USAGE_VERTEX_BUFFER_BIT
+      vertexBufferPropertyFlags = Vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+  (vertexBuffer, vertexBufferReleaseKey, _, vertexMemoryReleaseKey)
+    <- createBuffer' memoryProperties bufferSize vertexBufferUsageFlags
+         vertexBufferPropertyFlags
 
   -- Create a staging buffer
-  -- TODO Clean up the staging buffer after it's used.
   debug "Creating staging buffer."
   let stagingBufferUsageFlags = VkBuffer.BUFFER_USAGE_TRANSFER_SRC_BIT
       stagingMemoryPropertyFlags = Vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT
         .|. Vk.MEMORY_PROPERTY_HOST_COHERENT_BIT
-  (stagingBuffer, stagingBufferMemory) <- withBuffer' bufferSize
-    stagingBufferUsageFlags stagingMemoryPropertyFlags
+  (stagingBuffer, stagingBufferReleaseKey, stagingMem, stagingMemReleaseKey)
+    <- createBuffer' memoryProperties bufferSize stagingBufferUsageFlags
+         stagingMemoryPropertyFlags
 
-  -- Fill the buffer
   debug "Filling staging buffer."
-  ptr <-
-    VkMemory.mapMemory deviceHandle stagingBufferMemory 0 bufferSize Vk.zero
+  ptr <- VkMemory.mapMemory deviceHandle stagingMem 0 bufferSize Vk.zero
   liftIO . flip evalStateT (ptr, cycle pads) . mapM_ bufferer $ vertices
-  VkMemory.unmapMemory deviceHandle stagingBufferMemory
+  VkMemory.unmapMemory deviceHandle stagingMem
 
   debug "Copying staging buffer to destination buffer."
-  withOneTimeSubmitCommandBuffer $ \commandBuffer -> do
-    let bufferCopy = Vk.zero { VkCopy.size = bufferSize }
-    VkCmd.cmdCopyBuffer commandBuffer stagingBuffer vertexBuffer
-      (V.singleton bufferCopy)
+  -- Copies vertices synchronously into the staging buffer memory.
+  withOneTimeSubmitCommandBuffer deviceHandle queueHandle commandPool $
+    \commandBuffer -> do
+      let bufferCopy = Vk.zero { VkCopy.size = bufferSize }
+      VkCmd.cmdCopyBuffer commandBuffer stagingBuffer vertexBuffer
+        (V.singleton bufferCopy)
 
-  return $ Buffer {
-    bufferHandle = vertexBuffer,
-    bufferLength = numElems
+  debug "Destroying staging buffer."
+  release stagingMemReleaseKey
+  release stagingBufferReleaseKey
+
+  return $ BufferReadOnly {
+    rBufferHandle = vertexBuffer,
+    rBufferNumElems = numVertices,
+    rBufferReleaseKeys = (vertexBufferReleaseKey, vertexMemoryReleaseKey)
   }
 
-withBuffer' :: (MonadAsyncException m, MonadLogger m)
-  => Vk.DeviceSize
+writeBuffer :: Buffer 'ReadWrite a -> [a] -> ShadersT m ()
+writeBuffer _ _ = do
+  undefined
+
+-- createBuffer' - Create a Vk buffer and allocate device memory for it.
+createBuffer' :: (MonadAsyncException m, MonadLogger m,
+  MonadReader GraphicsEnv m, MonadResource m)
+  => VkDevice.PhysicalDeviceMemoryProperties
+  -> Vk.DeviceSize
   -> Vk.BufferUsageFlagBits
   -> Vk.MemoryPropertyFlags
-  -> ShadersT m (Vk.Buffer, Vk.DeviceMemory)
-withBuffer' bufferSize bufferUsageFlags memoryPropertyFlags = do
+  -> m (Vk.Buffer, ReleaseKey, Vk.DeviceMemory, ReleaseKey)
+createBuffer' memoryProperties bufferSize bufferUsageFlags
+  memoryPropertyFlags = do
+
   deviceHandle <- getDeviceHandle
 
   let bufferInfo = Vk.zero {
@@ -120,60 +209,28 @@ withBuffer' bufferSize bufferUsageFlags memoryPropertyFlags = do
         VkBuffer.size = bufferSize,
         VkBuffer.usage = bufferUsageFlags
       }
-  buffer <- fromCps
-    $ VkBuffer.withBuffer deviceHandle bufferInfo Nothing bracket
+  (bufferReleaseKey, buffer) <- allocate
+    (VkBuffer.createBuffer deviceHandle bufferInfo Nothing)
+    (\b -> VkBuffer.destroyBuffer deviceHandle b Nothing)
 
   memoryRequirements <-
     VkMemRequirements.getBufferMemoryRequirements deviceHandle buffer
 
   -- Allocate and bind buffer memory
-  memory <- allocateMemory memoryRequirements memoryPropertyFlags
+  (memoryReleaseKey, memory) <- allocateMemory memoryProperties
+    memoryRequirements memoryPropertyFlags
 
   VkMemRequirements.bindBufferMemory deviceHandle buffer memory 0
 
-  return (buffer, memory)
-
-allocateMemory :: (MonadAsyncException m, MonadLogger m)
-  => VkMemRequirements.MemoryRequirements
-  -> Vk.MemoryPropertyFlags
-  -> ShadersT m Vk.DeviceMemory
-allocateMemory memoryRequirements memoryPropertyFlags = do
-  deviceHandle <- getDeviceHandle
-
-  -- Find compatible memory
-  memoryProperties <- getDeviceMemoryProperties
-  let memoryTypeIndices = V.imapMaybe getMemoryTypeIndexIfCompatible
-        . VkDevice.memoryTypes
-        $ memoryProperties
-
-  when (V.null memoryTypeIndices) $ do
-    let msg = "No suitable memory type found."
-    err msg
-    lift . throw . ShadersMemoryException $ msg
-
-  let memoryTypeIndex = V.head memoryTypeIndices
-
-  let allocInfo = Vk.zero {
-        VkMemory.allocationSize = VkMemRequirements.size memoryRequirements,
-        VkMemory.memoryTypeIndex = fromIntegral memoryTypeIndex
-      }
-  fromCps
-    $ VkMemory.withMemory deviceHandle allocInfo Nothing bracket
- where
-  getMemoryTypeIndexIfCompatible i t =
-    if VkDevice.propertyFlags t .&&. memoryPropertyFlags
-         && testBit (VkMemRequirements.memoryTypeBits memoryRequirements) i
-    then Just i
-    else Nothing
-
+  return (buffer, bufferReleaseKey, memory, memoryReleaseKey)
 
 withOneTimeSubmitCommandBuffer :: (MonadIO m, MonadLogger m)
-  => (Vk.CommandBuffer -> ShadersT m ())
-  -> ShadersT m ()
-withOneTimeSubmitCommandBuffer c = do
-  deviceHandle <- getDeviceHandle
-  queueHandle <- getQueueHandle
-  commandPool <- getCommandPool
+  => Vk.Device
+  -> Vk.Queue
+  -> Vk.CommandPool
+  -> (Vk.CommandBuffer -> m ())
+  -> m ()
+withOneTimeSubmitCommandBuffer deviceHandle queueHandle commandPool c = do
   let commandBufferCreateInfo = Vk.zero {
         VkCmdBuffer.commandBufferCount = 1,
         VkCmdBuffer.commandPool = commandPool,
@@ -186,7 +243,8 @@ withOneTimeSubmitCommandBuffer c = do
   let cmdBuffer = V.head cmdBuffers
 
   let beginInfo = Vk.zero {
-        VkCmdBuffer.flags = VkCmdBuffer.COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
+        VkCmdBuffer.flags =
+          VkCmdBuffer.COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
       }
   VkCmdBuffer.beginCommandBuffer cmdBuffer beginInfo
 
@@ -196,7 +254,7 @@ withOneTimeSubmitCommandBuffer c = do
 
   let submitInfo = SomeStruct $ Vk.zero {
         VkQueue.commandBuffers = fmap Vk.commandBufferHandle . V.singleton
-                                   $ cmdBuffer
+          $ cmdBuffer
       }
 
   VkQueue.queueSubmit queueHandle (V.singleton submitInfo) Vk.zero
@@ -205,6 +263,15 @@ withOneTimeSubmitCommandBuffer c = do
   debug "Destroying temporary command buffer."
   VkCmdBuffer.freeCommandBuffers deviceHandle commandPool cmdBuffers
 
+
+destroyBuffer :: MonadIO m => Buffer t a -> ShadersT m ()
+destroyBuffer b = case b of
+  BufferReadOnly {..} -> releaseBuffer rBufferReleaseKeys
+  BufferWritable {..} -> releaseBuffer wBufferReleaseKeys
+ where
+  releaseBuffer (bufferReleaseKey, memoryReleaseKey) = do
+    release bufferReleaseKey
+    release memoryReleaseKey
 
 class BufferFormat a where
   type HostFormat a

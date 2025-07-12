@@ -55,8 +55,8 @@ dropVertices n (VertexArray b l s) =
 takeVertices :: Int -> VertexArray a -> VertexArray a
 takeVertices n (VertexArray b l s) = VertexArray b (min (max n 0) l) s
 
-toVertexArray :: Buffer a -> VertexArray a
-toVertexArray (Buffer h l) = VertexArray h l 0
+toVertexArray :: Buffer 'ReadOnly a -> VertexArray a
+toVertexArray (BufferReadOnly h l _) = VertexArray h l 0
 
 -- TODO Restart indices.
 data IndexArray = IndexArray {
@@ -86,9 +86,9 @@ takeIndices :: Int -> IndexArray -> IndexArray
 takeIndices n (IndexArray h l s t) = IndexArray h (min (max n 0) l) s t
 
 toIndexArray :: forall b. (IndexInput b)
-  => Buffer b
+  => Buffer 'ReadOnly b
   -> IndexArray
-toIndexArray (Buffer h l) = IndexArray h l 0 . indexType $ b
+toIndexArray (BufferReadOnly h l _) = IndexArray h l 0 . indexType $ b
  where b = undefined :: b
 
 -- PrimitiveArrays represent draw calls and their buffer bindings.

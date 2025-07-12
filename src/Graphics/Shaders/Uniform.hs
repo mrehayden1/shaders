@@ -45,8 +45,8 @@ type DeclM = ReaderT
   )
 
 -- Gets the uniform from the Pipeline environment.
-getUniform :: forall t e a x. UniformInput a
-  => (e -> Buffer (Uniform a))
+getUniform :: forall t e a r x. UniformInput a
+  => (e -> Buffer r (Uniform a))
   -> Pipeline t e (UniformFormat a x)
 getUniform getter = do
   -- Hash the getter StableName and look it up in the cache so we don't keep

@@ -1,32 +1,20 @@
 module Window (
   Window,
 
-  withWindow,
+  createWindow,
+
+  destroyWindow,
+
   pollEvents,
   windowShouldClose
 ) where
 
 import Control.Monad
 import Control.Monad.Exception
-import Control.Monad.IO.Class
-import Control.Monad.Codensity
 import Graphics.UI.GLFW hiding (createWindow, destroyWindow)
 import qualified Graphics.UI.GLFW as GLFW
 
 import Graphics.Shaders.Exception
-import Graphics.Shaders.Logger.Class
-
-withWindow :: (MonadAsyncException m, MonadLogger m)
-  => String
-  -> Codensity m Window
-withWindow name = do
-  debug "Creating window."
-  Codensity $ bracket
-    (liftIO $ createWindow name)
-    (\window -> do
-       debug "Destroying window."
-       liftIO $ destroyWindow window
-    )
 
 createWindow :: String -> IO Window
 createWindow title = do

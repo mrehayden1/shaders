@@ -26,6 +26,7 @@ import Control.Monad.Exception
 import Control.Monad.IO.Class
 import Control.Monad.Reader
 import Control.Monad.State
+import Control.Monad.Trans.Resource
 import Control.Monad.Writer
 import Data.Bits
 import Data.ByteString (ByteString)
@@ -137,9 +138,9 @@ tellVertexInput i = do
     \(n, ub, ins, ubs, sbs) -> (n + 1, ub, M.insert n i ins, ubs, sbs)
   return n'
 
-data BufferGetter e = forall a. BufferGetter (e -> Buffer a)
+data BufferGetter e = forall a r. BufferGetter (e -> Buffer r a)
 
-withBufferGetter :: BufferGetter e -> e -> (forall a. Buffer a -> r) -> r
+withBufferGetter :: BufferGetter e -> e -> (forall a r. Buffer r a -> r') -> r'
 withBufferGetter (BufferGetter getter) e f = f $ getter e
 
 data PrimitiveArrayGetter e =
@@ -250,12 +251,10 @@ compilePipeline pipeline = do
   let descriptorSetLayoutInfo = Vk.zero {
     VkDescr.bindings = V.fromList descrSetLayoutBindings
   }
-  descriptorSetLayout <- fromCps $ bracket
+  (_, descriptorSetLayout) <- allocate
     (VkDescr.createDescriptorSetLayout deviceHandle descriptorSetLayoutInfo
       Nothing)
-    (\l -> do
-        debug "Destroying descriptor set layout."
-        VkDescr.destroyDescriptorSetLayout deviceHandle l Nothing)
+    (\l -> VkDescr.destroyDescriptorSetLayout deviceHandle l Nothing)
 
   debug "Creating descriptor pool."
   let descriptorPoolInfo = Vk.zero {
@@ -269,12 +268,9 @@ compilePipeline pipeline = do
             (fromIntegral . length $ samplers)
         ]
       }
-  descriptorPool <- fromCps $ bracket
+  (_, descriptorPool) <- allocate
     (VkDescr.createDescriptorPool deviceHandle descriptorPoolInfo Nothing)
-    (\p -> do
-      debug "Destroying descriptor pool."
-      VkDescr.destroyDescriptorPool deviceHandle p Nothing
-    )
+    (\p -> VkDescr.destroyDescriptorPool deviceHandle p Nothing)
 
   debug "Allocating descriptor sets."
   let descriptorSetInfo = Vk.zero {
@@ -331,11 +327,9 @@ compilePipeline pipeline = do
   let layoutInfo = Vk.zero {
     VkPipeline.setLayouts = V.singleton descriptorSetLayout
   }
-  layout <- fromCps $ bracket
+  (_, layout) <- allocate
     (VkPipeline.createPipelineLayout deviceHandle layoutInfo Nothing)
-    (\l -> do
-        debug "Destroying pipeline layout."
-        VkPipeline.destroyPipelineLayout deviceHandle l Nothing)
+    (\l -> VkPipeline.destroyPipelineLayout deviceHandle l Nothing)
 
   let pipelineCreateInfos = V.singleton . SomeStruct $ Vk.zero {
     VkPipeline.colorBlendState = Just . SomeStruct $ Vk.zero {
@@ -393,18 +387,16 @@ compilePipeline pipeline = do
   }
 
   debug "Creating pipeline."
-  vkPipeline <- fromCps $ bracket
+  (_, (result, vkPipeline)) <- allocate
     (do (result, ps) <-
           VkPipeline.createGraphicsPipelines deviceHandle Vk.zero
             pipelineCreateInfos Nothing
-        when (result /= Vk.SUCCESS) $
-          warn . printf "Non success result: %s" . show $ result
-        return . V.head $ ps
+        return (result, V.head ps)
     )
-    (\p -> do
-      debug "Destroying pipeline."
-      VkPipeline.destroyPipeline deviceHandle p Nothing
-    )
+    (\(_, p) -> VkPipeline.destroyPipeline deviceHandle p Nothing)
+
+  when (result /= Vk.SUCCESS) $
+    warn . printf "Non success result: %s" . show $ result
 
   return $ CompiledPipeline {
     compiledPipeline = vkPipeline,
@@ -442,12 +434,9 @@ createShader device stage code = do
   let createInfo = Vk.zero {
     VkShader.code = compiledCode
   }
-  fromCps $ bracket
+  snd <$> allocate
     (VkShader.createShaderModule device createInfo Nothing)
-    (\s -> do
-      debug . printf "Destroying %s shader module." $ stageName
-      VkShader.destroyShaderModule device s Nothing
-    )
+    (\s -> VkShader.destroyShaderModule device s Nothing)
  where
   compile :: forall (s :: SpirV.ShaderKind). SpirV.IsShaderKind s
     => IO ByteString

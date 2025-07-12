@@ -3,9 +3,9 @@ module Graphics.Shaders.Internal.Instance (
 ) where
 
 import Control.Monad
-import Control.Monad.Codensity
 import Control.Monad.Exception
 import Control.Monad.IO.Class
+import Control.Monad.Trans.Resource
 import Data.ByteString
 import Data.ByteString.Char8 as BS8
 import Data.List (union)
@@ -26,37 +26,38 @@ import Vulkan.Zero as Vk
 import Graphics.Shaders.Logger.Class
 
 withInstance :: (MonadAsyncException m, MonadLogger m)
-  => Codensity m Vk.Instance
+  => ResourceT m Vk.Instance
 withInstance = do
-  Codensity $ bracket
+  logLevel <- loggerLevel
+
+  when (logLevel <= LogTrace) $ do
+    logTrace "Dumping available instance layers."
+    (_, layers) <- VkLayer.enumerateInstanceLayerProperties
+    forM_ layers $ \layer -> do
+      logTrace . printf "Layer discovered: %s" . show $ layer
+
+    logTrace "Dumping available instance extensions."
+    (_, extensions) <- VkExt.enumerateInstanceExtensionProperties Nothing
+    forM_ extensions $ \ext -> do
+      logTrace . printf "Extension discovered: %s" . show $ ext
+
+    forM_ layers $ \layer -> do
+      (_, exts) <- VkExt.enumerateInstanceExtensionProperties . Just
+                     . VkLayer.layerName $ layer
+
+      when (V.length exts > 0) $ do
+        logTrace . printf "Dumping extensions provided by layer %s."
+          . BS8.unpack . VkLayer.layerName $ layer
+
+        forM_ exts $ \ext -> do
+          logTrace . printf "Extension discovered: %s" . show $ ext
+
+  debug "Creating Vulkan instance..."
+  fmap snd $ allocate
     (do
       let appInfo = Vk.zero {
         VkApp.apiVersion = Vk13.API_VERSION_1_3
       }
-
-      logLevel <- loggerLevel
-
-      when (logLevel <= LogTrace) $ do
-        logTrace "Dumping available instance layers."
-        (_, layers) <- VkLayer.enumerateInstanceLayerProperties
-        forM_ layers $ \layer -> do
-          logTrace . printf "Layer discovered: %s" . show $ layer
-
-        logTrace "Dumping available instance extensions."
-        (_, extensions) <- VkExt.enumerateInstanceExtensionProperties Nothing
-        forM_ extensions $ \ext -> do
-          logTrace . printf "Extension discovered: %s" . show $ ext
-
-        forM_ layers $ \layer -> do
-          (_, exts) <- VkExt.enumerateInstanceExtensionProperties . Just
-                         . VkLayer.layerName $ layer
-
-          when (V.length exts > 0) $ do
-            logTrace . printf "Dumping extensions provided by layer %s."
-              . BS8.unpack . VkLayer.layerName $ layer
-
-            forM_ exts $ \ext -> do
-              logTrace . printf "Extension discovered: %s" . show $ ext
 
       windowInstanceExtensions <- liftIO $
         mapM packCString =<< GLFW.getRequiredInstanceExtensions
@@ -79,11 +80,6 @@ withInstance = do
               | logLevel <= LogTrace
               ]
           }
-
-      debug "Creating Vulkan instance..."
       VkInit.createInstance instanceInfo Nothing
     )
-    (\i -> do
-      debug "Destroying Vulkan instance."
-      VkInit.destroyInstance i Nothing
-    )
+    (flip VkInit.destroyInstance Nothing)

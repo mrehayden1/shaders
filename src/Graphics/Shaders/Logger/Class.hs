@@ -9,9 +9,9 @@ module Graphics.Shaders.Logger.Class (
   err
 ) where
 
-import Control.Monad.Codensity
 import Control.Monad.State
 import Control.Monad.Trans.Maybe
+import Control.Monad.Trans.Resource
 
 class MonadLogger m where
   loggerLevel :: m LogLevel
@@ -36,7 +36,7 @@ err :: MonadLogger m => String -> m ()
 err = loggerLog LogError
 
 
-instance (Monad m, MonadLogger m) => MonadLogger (Codensity m) where
+instance (Monad m, MonadLogger m) => MonadLogger (ResourceT m) where
   loggerLevel = lift loggerLevel
   loggerLog lvl = lift . loggerLog lvl
 

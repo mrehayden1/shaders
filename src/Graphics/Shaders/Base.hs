@@ -3,8 +3,6 @@ module Graphics.Shaders.Base (
   GraphicsEnv(..),
   DrawState(..),
   runShadersT,
-  fromCps,
-  fromCodensity,
 
   Frame(..),
   SyncObjects(..),
@@ -24,10 +22,10 @@ module Graphics.Shaders.Base (
   awaitIdle
 ) where
 
-import Control.Monad.Codensity
 import Control.Monad.Exception
 import Control.Monad.Reader
 import Control.Monad.State
+import Control.Monad.Trans.Resource
 import Data.Vector (Vector)
 import Data.Word
 import qualified Data.Vector as V
@@ -46,13 +44,16 @@ import Graphics.Shaders.Internal.Device
 import Graphics.Shaders.Internal.Sync
 import Graphics.Shaders.Internal.Window
 import Graphics.Shaders.Logger.Base
+import Graphics.Shaders.Orphans ()
 
 framesInFlight :: Int
 framesInFlight = 2
 
 newtype ShadersT m a = ShadersT {
-  unShadersT :: ReaderT GraphicsEnv (StateT DrawState (Codensity m)) a
-} deriving (Functor, Applicative, Monad, MonadIO)
+  unShadersT :: ReaderT GraphicsEnv (StateT DrawState (ResourceT m)) a
+} deriving (Functor, Applicative, Monad, MonadIO, MonadAsyncException,
+    MonadException, MonadFix, MonadReader GraphicsEnv, MonadResource,
+    MonadState DrawState)
 
 data GraphicsEnv = GraphicsEnv {
   graphicsDevice :: Device,
@@ -69,12 +70,6 @@ data DrawState = DrawState {
   drawStateSwapImage :: (Word32, Vk.Framebuffer)
 }
 
-fromCps :: (forall b. (a -> m b) -> m b) -> ShadersT m a
-fromCps cps = fromCodensity $ Codensity cps
-
-fromCodensity :: Codensity m a -> ShadersT m a
-fromCodensity = ShadersT . lift . lift
-
 instance MonadTrans ShadersT where
   lift = ShadersT . lift . lift . lift
   {-# INLINE lift #-}
@@ -85,11 +80,11 @@ instance (Monad m, MonadLogger m) => MonadLogger (ShadersT m) where
   loggerLog lvl msg = lift $ loggerLog lvl msg
   {-# INLINE loggerLog #-}
 
-runShadersT :: (MonadAsyncException m, MonadLogger m)
+runShadersT :: (MonadUnliftIO m, MonadAsyncException m, MonadLogger m)
   => GLFW.Window
   -> ShadersT m a
-  -> Codensity m a
-runShadersT window m = do
+  -> m a
+runShadersT window m = runResourceT $ do
   vkInstance <- withInstance
   surface <- createWindowSurface window vkInstance
   device@Device{..} <- withDevice vkInstance window surface
@@ -113,10 +108,10 @@ runShadersT window m = do
       }
   flip evalStateT drawState . flip runReaderT env . unShadersT $ m
  where
-  withCommandBuffers :: (MonadAsyncException m, MonadLogger m)
+  withCommandBuffers :: (MonadAsyncException m, MonadLogger m, MonadResource m)
     => Device
     -> Int
-    -> Codensity m (Vector Vk.CommandBuffer)
+    -> m (Vector Vk.CommandBuffer)
   withCommandBuffers Device{..} n = do
     let commandBufferCreateInfo = Vk.zero {
       VkBuffer.commandBufferCount = fromIntegral n,
@@ -124,50 +119,49 @@ runShadersT window m = do
       VkBuffer.level = VkBuffer.COMMAND_BUFFER_LEVEL_PRIMARY
     }
     debug "Allocating command buffer."
-    Codensity $ bracket
+    snd <$> allocate
       (VkBuffer.allocateCommandBuffers deviceHandle commandBufferCreateInfo)
       (\buffers -> do
-         debug "Destroying command buffer."
          VkBuffer.freeCommandBuffers deviceHandle deviceCommandPool buffers)
 
-getCommandPool :: ShadersT m Vk.CommandPool
-getCommandPool = ShadersT $ asks (deviceCommandPool . graphicsDevice)
+getCommandPool :: (MonadReader GraphicsEnv m) => m Vk.CommandPool
+getCommandPool = asks (deviceCommandPool . graphicsDevice)
 {-# INLINE getCommandPool #-}
 
-getCurrentFrame :: ShadersT m Frame
-getCurrentFrame = ShadersT $ do
+getCurrentFrame :: (MonadReader GraphicsEnv m, MonadState DrawState m)
+  => m Frame
+getCurrentFrame = do
   frames <- asks graphicsFrames
   frameNumber <- gets drawStateFrameIndex
   return $ frames V.! frameNumber
 
-getCurrentSwapChainImage :: ShadersT m (Word32, Vk.Framebuffer)
-getCurrentSwapChainImage = ShadersT $ gets drawStateSwapImage
+getCurrentSwapChainImage :: MonadState DrawState m => m (Word32, Vk.Framebuffer)
+getCurrentSwapChainImage = gets drawStateSwapImage
 {-# INLINE getCurrentSwapChainImage #-}
 
-getDeviceHandle :: ShadersT m Vk.Device
-getDeviceHandle = ShadersT $ asks (deviceHandle . graphicsDevice)
+getDeviceHandle :: MonadReader GraphicsEnv m => m Vk.Device
+getDeviceHandle = asks (deviceHandle . graphicsDevice)
 {-# INLINE getDeviceHandle #-}
 
-getDeviceMemoryProperties :: ShadersT m VkDevice.PhysicalDeviceMemoryProperties
-getDeviceMemoryProperties = ShadersT $
-  asks (deviceMemoryProperties . graphicsDevice)
+getDeviceMemoryProperties :: MonadReader GraphicsEnv m
+  => m VkDevice.PhysicalDeviceMemoryProperties
+getDeviceMemoryProperties = asks (deviceMemoryProperties . graphicsDevice)
 {-# INLINE getDeviceMemoryProperties #-}
 
-getExtent :: ShadersT m VkExtent2D.Extent2D
-getExtent = ShadersT $
-  asks (swapChainExtent . deviceSwapChain . graphicsDevice)
+getExtent :: MonadReader GraphicsEnv m => m VkExtent2D.Extent2D
+getExtent = asks (swapChainExtent . deviceSwapChain . graphicsDevice)
 {-# INLINE getExtent #-}
 
-getQueueHandle :: ShadersT m Vk.Queue
-getQueueHandle = ShadersT $ asks (deviceQueueHandle . graphicsDevice)
+getQueueHandle :: MonadReader GraphicsEnv m => m Vk.Queue
+getQueueHandle = asks (deviceQueueHandle . graphicsDevice)
 {-# INLINE getQueueHandle #-}
 
-getRenderPass :: ShadersT m Vk.RenderPass
-getRenderPass = ShadersT $ asks (deviceRenderPass . graphicsDevice)
+getRenderPass :: MonadReader GraphicsEnv m => m Vk.RenderPass
+getRenderPass = asks (deviceRenderPass . graphicsDevice)
 {-# INLINE getRenderPass #-}
 
-getSwapChainHandle :: ShadersT m VkSwap.SwapchainKHR
-getSwapChainHandle = ShadersT $
+getSwapChainHandle :: MonadReader GraphicsEnv m => m VkSwap.SwapchainKHR
+getSwapChainHandle =
   asks (swapChainHandle . deviceSwapChain . graphicsDevice)
 
 swap :: (MonadIO m, MonadLogger m) => ShadersT m ()

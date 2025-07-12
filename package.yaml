@@ -68,6 +68,7 @@ library:
   - lens
   - linear
   - mtl
+  - resourcet
   - shaderc
   - time
   - transformers
@@ -85,7 +86,6 @@ executables:
     - -rtsopts
     - -with-rtsopts=-N
     dependencies:
-    - kan-extensions
     - linear
     - mtl
     - shaders

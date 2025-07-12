@@ -5,8 +5,8 @@ module Graphics.Shaders.Internal.Device.SwapChain (
 ) where
 
 import Control.Monad
-import Control.Monad.Codensity
 import Control.Monad.Exception
+import Control.Monad.Trans.Resource
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Vulkan.Core10.Enums as Vk
@@ -36,7 +36,7 @@ withSwapChain :: (MonadAsyncException m, MonadLogger m)
   -> Vk.Device
   -> Vk.RenderPass
   -> SwapChainSettings
-  -> Codensity m SwapChain
+  -> ResourceT m SwapChain
 withSwapChain surface device renderPass SwapChainSettings{..} = do
   debug "Creating swap chain."
   let swapChainImageFormat = VkSurface.format swapSettingsSurfaceFormat
@@ -58,13 +58,11 @@ withSwapChain surface device renderPass SwapChainSettings{..} = do
     VkSwapChain.clipped = True
   }
 
-  swapChain <- Codensity $
-    bracket
-      (VkSwapChain.createSwapchainKHR device swapChainCreateInfo Nothing)
-      (\swapChain -> do
-        debug "Destroying swap chain."
-        VkSwapChain.destroySwapchainKHR device swapChain Nothing
-      )
+  (_, swapChain) <- allocate
+    (VkSwapChain.createSwapchainKHR device swapChainCreateInfo Nothing)
+    (\swapChain -> do
+      VkSwapChain.destroySwapchainKHR device swapChain Nothing
+    )
 
   -- Create swap chain images and image views.
   debug "Retrieving swap chain images."
@@ -75,8 +73,7 @@ withSwapChain surface device renderPass SwapChainSettings{..} = do
     warn "Vulkan API returned incomplete swap chain images list."
 
   debug "Creating swap chain image views."
-
-  swapImageViews <- Codensity $ bracket
+  (_, swapImageViews) <- allocate
     (forM swapImages $ \image -> do
       let imageViewCreateInfo = Vk.zero {
         VkImageView.format = swapChainImageFormat,
@@ -90,11 +87,7 @@ withSwapChain surface device renderPass SwapChainSettings{..} = do
       }
       VkImageView.createImageView device imageViewCreateInfo Nothing
     )
-    (\imageViews -> do
-      debug "Destroying swap chain image views."
-      forM_ imageViews $ \i ->
-        VkImageView.destroyImageView device i Nothing
-    )
+    (mapM_ $ \i -> VkImageView.destroyImageView device i Nothing)
 
   framebuffers <-
     withFramebuffers device renderPass swapImageViews swapSettingsExtent
@@ -111,10 +104,10 @@ withFramebuffers :: (MonadAsyncException m, MonadLogger m)
   -> Vk.RenderPass
   -> Vector Vk.ImageView
   -> Extent2D
-  -> Codensity m (Vector Vk.Framebuffer)
+  -> ResourceT m (Vector Vk.Framebuffer)
 withFramebuffers device renderPass imageViews imageExtent = do
   debug "Creating framebuffers."
-  Codensity $ bracket
+  fmap snd $ allocate
     (forM imageViews $ \imageView -> do
         let framebufferCreateInfo = Vk.zero {
           VkFramebuffer.attachments = V.singleton imageView,
@@ -125,8 +118,6 @@ withFramebuffers device renderPass imageViews imageExtent = do
         }
         VkFramebuffer.createFramebuffer device framebufferCreateInfo Nothing
     )
-    (\framebuffers -> do
-       debug "Destroying framebuffers."
-       forM_ framebuffers $ \framebuffer ->
-         VkFramebuffer.destroyFramebuffer device framebuffer Nothing
+    (mapM_ $ \framebuffer ->
+       VkFramebuffer.destroyFramebuffer device framebuffer Nothing
     )

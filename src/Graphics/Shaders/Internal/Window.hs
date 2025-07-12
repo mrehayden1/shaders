@@ -3,9 +3,9 @@ module Graphics.Shaders.Internal.Window (
 ) where
 
 import Control.Monad
-import Control.Monad.Codensity
 import Control.Monad.Exception
 import Control.Monad.IO.Class
+import Control.Monad.Trans.Resource
 import Foreign
 import qualified Graphics.UI.GLFW as GLFW
 import qualified Vulkan as Vk
@@ -16,12 +16,12 @@ import Graphics.Shaders.Logger.Class
 createWindowSurface :: (MonadAsyncException m, MonadLogger m)
   => GLFW.Window
   -> Vk.Instance
-  -> Codensity m Vk.SurfaceKHR
+  -> ResourceT m Vk.SurfaceKHR
 createWindowSurface window vkInstance = do
-  Codensity $ bracket createWindowSurface' destroyWindowSurface
+  debug "Creating surface..."
+  fmap snd . allocate createWindowSurface' $ destroyWindowSurface
  where
   createWindowSurface' = do
-    debug "Creating surface..."
     let instancePtr = castPtr $ Vk.instanceHandle vkInstance
     liftIO . alloca $ \surfacePtr -> do
       res <- fmap Vk.Result
@@ -32,5 +32,4 @@ createWindowSurface window vkInstance = do
       peek surfacePtr
 
   destroyWindowSurface surface = do
-    debug "Destroying surface."
     Vk.destroySurfaceKHR vkInstance surface Nothing

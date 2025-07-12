@@ -6,9 +6,9 @@ module Graphics.Shaders.Internal.Device (
 ) where
 
 import Control.Monad
-import Control.Monad.Codensity
 import Control.Monad.Exception
 import Control.Monad.Trans
+import Control.Monad.Trans.Resource
 import Data.ByteString.UTF8 as UTF8
 import qualified Data.Vector as V
 import Data.Word
@@ -47,7 +47,7 @@ withDevice :: (MonadAsyncException m, MonadLogger m)
   => Vk.Instance
   -> GLFW.Window
   -> VkSurface.SurfaceKHR
-  -> Codensity m Device
+  -> ResourceT m Device
 withDevice vkInstance window surface = do
   debug "Creating logical device..."
   devices <- lift $
@@ -80,12 +80,9 @@ withDevice vkInstance window surface = do
           (V.fromList requiredDeviceExtensions)
           Nothing
 
-  vkDevice <- Codensity $ bracket
+  (_, vkDevice) <- allocate
     (VkDevice.createDevice physicalDeviceHandle deviceCreateInfo Nothing)
-    (\device -> do
-       debug "Destroying logical device."
-       VkDevice.destroyDevice device Nothing
-    )
+    (\device -> VkDevice.destroyDevice device Nothing)
 
   queue <- VkQueue.getDeviceQueue vkDevice physicalDeviceQueueFamilyIndex 0
 
@@ -112,7 +109,7 @@ withDevice vkInstance window surface = do
 withRenderPass :: (MonadAsyncException m, MonadLogger m)
   => Vk.Device
   -> Vk.Format
-  -> Codensity m Vk.RenderPass
+  -> ResourceT m Vk.RenderPass
 withRenderPass device format = do
   debug "Creating render pass."
   let passCreateInfo = Vk.zero {
@@ -138,17 +135,14 @@ withRenderPass device format = do
       }
     ]
   }
-  Codensity $ bracket
+  fmap snd $ allocate
     (VkPass.createRenderPass device passCreateInfo Nothing)
-    (\p -> do
-       debug "Destroying render pass."
-       VkPass.destroyRenderPass device p Nothing
-    )
+    (\p -> VkPass.destroyRenderPass device p Nothing)
 
 withCommandPool :: (MonadAsyncException m, MonadLogger m)
   => Vk.Device
   -> Word32
-  -> Codensity m Vk.CommandPool
+  -> ResourceT m Vk.CommandPool
 withCommandPool device queueFamilyIndex = do
   let poolCreateInfo = Vk.zero {
     VkPool.flags = VkPool.COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
@@ -156,8 +150,6 @@ withCommandPool device queueFamilyIndex = do
   }
 
   debug "Creating command pool."
-  Codensity $ bracket
+  fmap snd $ allocate
     (VkPool.createCommandPool device poolCreateInfo Nothing)
-    (\pool -> do
-       debug "Destroying command pool."
-       VkPool.destroyCommandPool device pool Nothing)
+    (\pool -> VkPool.destroyCommandPool device pool Nothing)

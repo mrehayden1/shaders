@@ -8,13 +8,15 @@ module Graphics.Shaders.Logger.Base (
 
 import Control.Monad.Exception
 import Control.Monad.Reader
+import Control.Monad.Trans.Resource
 import Text.Printf
 
 import Graphics.Shaders.Logger.Class
 
 newtype LoggerT m a = LoggerT {
-    unLoggerT :: ReaderT LogLevel m a
-  } deriving (Functor, Applicative, Monad, MonadException, MonadAsyncException)
+  unLoggerT :: ReaderT LogLevel m a
+} deriving (Functor, Applicative, Monad, MonadException, MonadAsyncException,
+    MonadFix, MonadUnliftIO)
 
 -- Local logging changes, useful for debugging.
 logger :: Monad m => LogLevel -> LoggerT m a -> LoggerT m a

@@ -1,5 +1,6 @@
 module Graphics.Shaders.Buffer (
   Buffer,
+  BufferAccess(..),
 
   B,
   B2,
@@ -9,7 +10,12 @@ module Graphics.Shaders.Buffer (
   BufferFormat(..),
   ToBuffer(..),
 
-  withBuffer
+  createBuffer,
+  createBufferReadOnly,
+
+  destroyBuffer,
+
+  writeBuffer
 ) where
 
 import Graphics.Shaders.Internal.Buffer

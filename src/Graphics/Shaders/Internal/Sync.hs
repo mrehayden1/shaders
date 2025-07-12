@@ -4,8 +4,8 @@ module Graphics.Shaders.Internal.Sync (
 ) where
 
 import Control.Monad
-import Control.Monad.Codensity
 import Control.Monad.Exception
+import Control.Monad.Trans.Resource
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import qualified Vulkan.Core10 as Vk
@@ -21,29 +21,25 @@ data SyncObjects = SyncObjects {
    syncRenderFinishedSemaphore :: Vk.Semaphore
 }
 
-withSyncObjects :: (MonadAsyncException m, MonadLogger m)
+withSyncObjects :: (MonadAsyncException m, MonadLogger m, MonadResource m)
   => Device
   -> Int
-  -> Codensity m (Vector SyncObjects)
+  -> m (Vector SyncObjects)
 withSyncObjects Device{..} n =
   fmap V.fromList . replicateM n $ do
     debug "Creating render finished semaphore."
-    renderFinishedSemaphore <- Codensity $ bracket
+    (_, renderFinishedSemaphore) <- allocate
       (VkSemaphore.createSemaphore deviceHandle Vk.zero Nothing)
-      (\semaphore -> do
-         debug "Destroying render finished semaphore."
+      (\semaphore ->
          VkSemaphore.destroySemaphore deviceHandle semaphore Nothing
       )
     debug "Creating in flight fence."
     let inFlightFenceCreateInfo = Vk.zero {
             VkFence.flags = VkFence.FENCE_CREATE_SIGNALED_BIT
           }
-    inFlightFence <- Codensity $ bracket
+    (_, inFlightFence) <- allocate
       (VkFence.createFence deviceHandle inFlightFenceCreateInfo Nothing)
-      (\fence -> do
-         debug "Destroying in flight fence."
-         VkFence.destroyFence deviceHandle fence Nothing
-      )
+      (\fence -> VkFence.destroyFence deviceHandle fence Nothing)
     return $ SyncObjects {
         syncInFlightFence = inFlightFence,
         syncRenderFinishedSemaphore = renderFinishedSemaphore

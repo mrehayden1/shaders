@@ -42,6 +42,7 @@ library
       Graphics.Shaders.Internal.Expr
       Graphics.Shaders.Internal.FragmentStream
       Graphics.Shaders.Internal.Instance
+      Graphics.Shaders.Internal.Memory
       Graphics.Shaders.Internal.Pipeline
       Graphics.Shaders.Internal.PrimitiveArray
       Graphics.Shaders.Internal.PrimitiveStream
@@ -51,6 +52,7 @@ library
       Graphics.Shaders.Internal.Window
       Graphics.Shaders.Logger.Base
       Graphics.Shaders.Logger.Class
+      Graphics.Shaders.Orphans
       Graphics.Shaders.Pipeline
       Graphics.Shaders.PrimitiveArray
       Graphics.Shaders.PrimitiveStream
@@ -97,6 +99,7 @@ library
     , lens
     , linear
     , mtl
+    , resourcet
     , shaderc
     , time
     , transformers
@@ -134,7 +137,6 @@ executable example
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
-    , kan-extensions
     , linear
     , mtl
     , shaders
