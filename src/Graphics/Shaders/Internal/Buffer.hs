@@ -187,7 +187,7 @@ createBufferReadOnly vertices = do
     rBufferReleaseKeys = (vertexBufferReleaseKey, vertexMemoryReleaseKey)
   }
 
-writeBuffer :: Buffer 'ReadWrite a -> [a] -> ShadersT m ()
+writeBuffer :: Buffer 'ReadWrite a -> [HostFormat a] -> ShadersT m ()
 writeBuffer _ _ = do
   undefined
 

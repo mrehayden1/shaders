@@ -7,6 +7,9 @@ module Graphics.Shaders.Internal.Expr (
 
   execExprM,
 
+  GlType(..),
+
+  tellAssignment,
   tellStatement,
 
   toV2S,
@@ -200,9 +203,9 @@ instance Floating (S x Float) where
   {-# INLINE acosh #-}
   acosh = fun1 GlFloat "acosh"
 
--- Conversion to V2 (S x a) with assignment
+-- Conversion to V2 (S x a)
 toV2S :: S x (V2 a) -> V2 (S x a)
-toV2S = toV2S' . tellAssignment GlVec2 . unS
+toV2S = toV2S' . unS
 
 -- Unsafe conversion to V2 (S x a)
 toV2S' :: ExprM ByteString -> V2 (S x a)
@@ -211,9 +214,9 @@ toV2S' expr =
     (S $ fmap (<> "[0]") expr)
     (S $ fmap (<> "[1]") expr)
 
--- Conversion to V3 (S x a) with assignment
+-- Conversion to V3 (S x a)
 toV3S :: S x (V3 a) -> V3 (S x a)
-toV3S = toV3S' . tellAssignment GlVec3 . unS
+toV3S = toV3S' . unS
 
 -- Unsafe conversion to V3 (S x a)
 toV3S' :: ExprM ByteString -> V3 (S x a)
@@ -223,9 +226,9 @@ toV3S' expr =
     (S $ fmap (<> "[1]") expr)
     (S $ fmap (<> "[2]") expr)
 
--- Conversion to V4 (S x a) with assignment
+-- Conversion to V4 (S x a)
 toV4S :: S x (V4 a) -> V4 (S x a)
-toV4S = toV4S' . tellAssignment GlVec4 . unS
+toV4S = toV4S' . unS
 
 -- Unsafe conversion to V4 (S x a)
 toV4S' :: ExprM ByteString -> V4 (S x a)

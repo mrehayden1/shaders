@@ -73,7 +73,7 @@ getSampler getter = do
 -- Texture sampler shader expressions, i.e. the GLSL `texture` function.
 sample :: S x Sampler -> V2 (S x Float) -> V4 (S x Float)
 sample s (V2 u v) =
-  toV4S . S $ do
+  toV4S' . tellAssignment GlVec4 $ do
     s' <- unS s
     u' <- unS u
     v' <- unS v
