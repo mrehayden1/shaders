@@ -52,34 +52,39 @@ withInstance = do
         forM_ exts $ \ext -> do
           logTrace . printf "Extension discovered: %s" . show $ ext
 
-  debug "Creating Vulkan instance..."
-  fmap snd $ allocate
-    (do
-      let appInfo = Vk.zero {
-        VkApp.apiVersion = Vk13.API_VERSION_1_3
+  let appInfo = Vk.zero {
+    VkApp.apiVersion = Vk13.API_VERSION_1_3
+  }
+
+  -- Window extensions *should* always contain VK_KHR_surface, but we'll
+  -- add it anyway since we'll need it later.
+  windowInstanceExtensions <- liftIO $
+    mapM packCString =<< GLFW.getRequiredInstanceExtensions
+
+  let extraInstanceExtensions = [
+          VkSurface.KHR_SURFACE_EXTENSION_NAME
+        ] <> [
+          VkValidation.EXT_VALIDATION_FEATURES_EXTENSION_NAME
+        | logLevel <= LogTrace
+        ]
+      requiredExtensions = V.fromList
+        . (extraInstanceExtensions `union`) $ windowInstanceExtensions
+      requiredLayers = V.fromList [
+          "VK_LAYER_KHRONOS_validation"
+        | logLevel <= LogTrace
+        ]
+      instanceInfo = Vk.zero {
+        VkInit.applicationInfo = Just appInfo,
+        VkInit.enabledExtensionNames = requiredExtensions,
+        VkInit.enabledLayerNames = requiredLayers
       }
 
-      windowInstanceExtensions <- liftIO $
-        mapM packCString =<< GLFW.getRequiredInstanceExtensions
+  logTrace . printf "Requesting extensions: %s" . show $ requiredExtensions
+  logTrace . printf "Requesting layers: %s" . show $ requiredLayers
 
-      -- Window extensions *should* always contain VK_KHR_surface, but we'll
-      -- add it anyway since we'll need it later.
-      let extraInstanceExtensions = [
-              VkSurface.KHR_SURFACE_EXTENSION_NAME
-            ] <> [
-              VkValidation.EXT_VALIDATION_FEATURES_EXTENSION_NAME
-            | logLevel <= LogTrace
-            ]
-          requiredExtensions = V.fromList
-            . (extraInstanceExtensions `union`) $ windowInstanceExtensions
-          instanceInfo = Vk.zero {
-            VkInit.applicationInfo = Just appInfo,
-            VkInit.enabledExtensionNames = requiredExtensions,
-            VkInit.enabledLayerNames = V.fromList [
-                "VK_LAYER_KHRONOS_validation"
-              | logLevel <= LogTrace
-              ]
-          }
+  debug "Creating Vulkan instance..."
+  snd <$> allocate
+    (do
       VkInit.createInstance instanceInfo Nothing
     )
-    (flip VkInit.destroyInstance Nothing)
+    (`VkInit.destroyInstance` Nothing)
