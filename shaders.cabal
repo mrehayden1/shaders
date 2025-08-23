@@ -75,6 +75,7 @@ library
       FlexibleInstances
       GADTs
       GeneralizedNewtypeDeriving
+      LambdaCase
       MultiParamTypeClasses
       OverloadedStrings
       RankNTypes
@@ -125,6 +126,7 @@ executable example
       FlexibleInstances
       GADTs
       GeneralizedNewtypeDeriving
+      LambdaCase
       MultiParamTypeClasses
       OverloadedStrings
       RankNTypes

@@ -35,7 +35,6 @@ import Control.Monad.Trans.Resource
 import Control.Monad.Writer
 import qualified Data.Vector as V
 import Data.Bits
-import Data.IORef
 import Data.Word
 import Foreign.Ptr
 import Foreign.Storable
@@ -58,7 +57,7 @@ import Graphics.Shaders.Base
 import Graphics.Shaders.Logger.Class
 import Graphics.Shaders.Internal.Memory
 
--- BufferAccess - A phantom type that determines the usage of a buffer.
+-- BufferAccess - Buffer usage type.
 --
 -- BufferReadOnly
 --  Stored in fast GPU accesible memory and only written to on initialization
@@ -76,28 +75,31 @@ data Buffer (r :: BufferAccess) a where
     } -> Buffer 'ReadOnly a
   BufferWritable :: {
       -- Points to the offset of the current front sub-suffer.
-      wBufferFrontSubBuffer :: IORef Int,
       wBufferHandle :: Vk.Buffer,
       wBufferMemory :: Vk.DeviceMemory,
       wBufferNumElems :: Int,
       wBufferPads :: [Int],
-      wBufferReleaseKeys :: (ReleaseKey, ReleaseKey),
+      wBufferPtr :: Ptr (),
+      wBufferReleaseKeys :: (ReleaseKey, ReleaseKey, ReleaseKey, ReleaseKey),
+      wBufferStagingBufferHandle :: Vk.Buffer,
       wBufferStride :: Int,
       wBufferWriter :: HostFormat a -> BufferWriterM a
     } -> Buffer 'ReadWrite a
 
 bufferHandle :: Buffer r a -> Vk.Buffer
-bufferHandle (BufferReadOnly h _ _          ) = h
-bufferHandle (BufferWritable _ h _ _ _ _ _ _) = h
+bufferHandle (BufferReadOnly h _ _)             = h
+bufferHandle (BufferWritable h _ _ _ _ _ _ _ _) = h
 
 -- Allocate a writable buffer with `l` elements of type `a`
-createBuffer :: forall m a. (MonadAsyncException m, MonadLogger m, BufferFormat a)
-    => Int -> ShadersT m (Buffer 'ReadWrite a)
+createBuffer :: forall m a. (MonadAsyncException m, MonadLogger m,
+    BufferFormat a)
+  => Int -> ShadersT m (Buffer 'ReadWrite a)
 createBuffer numVertices = do
+  deviceHandle <- getDeviceHandle
   memoryProperties <- getDeviceMemoryProperties
   numFrames <- ShadersT $ asks (V.length . graphicsFrames)
 
-  let ToBuffer (Kleisli calcAlign) (Kleisli bufferer) _ alignMode
+  let ToBuffer (Kleisli calcAlign) (Kleisli bufWriter) _ alignMode usageFlags
         = toBuffer :: ToBuffer (HostFormat a) a
 
   let ((_, pads), stride) = flip runState 0 . runWriterT
@@ -107,24 +109,35 @@ createBuffer numVertices = do
 
   debug "Creating writable buffer."
   let vertexBufferUsageFlags = VkBuffer.BUFFER_USAGE_TRANSFER_DST_BIT
-        .|. VkBuffer.BUFFER_USAGE_VERTEX_BUFFER_BIT
+        .|. usageFlags
       vertexBufferPropertyFlags = Vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT
         .|. Vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT
   (buffer, bufferReleaseKey, memory, memoryReleaseKey)
     <- createBuffer' memoryProperties bufferSize vertexBufferUsageFlags
          vertexBufferPropertyFlags
 
-  frontSubBufferRef <- liftIO $ newIORef 0
+  -- Create a staging buffer
+  debug "Creating staging buffer."
+  let stagingBufferUsageFlags = VkBuffer.BUFFER_USAGE_TRANSFER_SRC_BIT
+      stagingMemoryPropertyFlags = Vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT
+        .|. Vk.MEMORY_PROPERTY_HOST_COHERENT_BIT
+  (stagingBuffer, stagingBufferReleaseKey, stagingMem, stagingMemReleaseKey)
+    <- createBuffer' memoryProperties bufferSize stagingBufferUsageFlags
+         stagingMemoryPropertyFlags
+
+  ptr <- VkMemory.mapMemory deviceHandle stagingMem 0 bufferSize Vk.zero
 
   return $ BufferWritable {
-    wBufferFrontSubBuffer = frontSubBufferRef,
     wBufferHandle = buffer,
     wBufferMemory = memory,
     wBufferNumElems = numVertices,
     wBufferPads = pads,
-    wBufferReleaseKeys = (bufferReleaseKey, memoryReleaseKey),
+    wBufferPtr = ptr,
+    wBufferReleaseKeys = (bufferReleaseKey, memoryReleaseKey,
+      stagingBufferReleaseKey, stagingMemReleaseKey),
+    wBufferStagingBufferHandle = stagingBuffer,
     wBufferStride = stride,
-    wBufferWriter = bufferer
+    wBufferWriter = bufWriter
   }
 
 createBufferReadOnly :: forall a m. (MonadAsyncException m, MonadLogger m,
@@ -137,7 +150,7 @@ createBufferReadOnly vertices = do
   queueHandle <- getQueueHandle
   commandPool <- getCommandPool
 
-  let ToBuffer (Kleisli calcAlign) (Kleisli bufferer) _ alignMode
+  let ToBuffer (Kleisli calcAlign) (Kleisli bufferer) _ alignMode usageFlags
         = toBuffer :: ToBuffer (HostFormat a) a
 
   let ((_, pads), stride) = flip runState 0 . runWriterT
@@ -149,7 +162,7 @@ createBufferReadOnly vertices = do
   -- Create a vertex buffer
   debug "Creating read only buffer."
   let vertexBufferUsageFlags = VkBuffer.BUFFER_USAGE_TRANSFER_DST_BIT
-        .|. VkBuffer.BUFFER_USAGE_VERTEX_BUFFER_BIT
+        .|. usageFlags
       vertexBufferPropertyFlags = Vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT
   (vertexBuffer, vertexBufferReleaseKey, _, vertexMemoryReleaseKey)
     <- createBuffer' memoryProperties bufferSize vertexBufferUsageFlags
@@ -187,9 +200,12 @@ createBufferReadOnly vertices = do
     rBufferReleaseKeys = (vertexBufferReleaseKey, vertexMemoryReleaseKey)
   }
 
-writeBuffer :: Buffer 'ReadWrite a -> [HostFormat a] -> ShadersT m ()
-writeBuffer _ _ = do
-  undefined
+writeBuffer :: MonadIO m => Buffer 'ReadWrite a -> [HostFormat a]
+  -> ShadersT m ()
+writeBuffer BufferWritable{..} =
+  -- Put the vertices in the staging buffer to be copied to the front buffer
+  -- before draw commands are issued in the next frame.
+  liftIO . flip evalStateT (wBufferPtr, wBufferPads) . mapM_ wBufferWriter
 
 -- createBuffer' - Create a Vk buffer and allocate device memory for it.
 createBuffer' :: (MonadAsyncException m, MonadLogger m,
@@ -200,7 +216,7 @@ createBuffer' :: (MonadAsyncException m, MonadLogger m,
   -> Vk.MemoryPropertyFlags
   -> m (Vk.Buffer, ReleaseKey, Vk.DeviceMemory, ReleaseKey)
 createBuffer' memoryProperties bufferSize bufferUsageFlags
-  memoryPropertyFlags = do
+    memoryPropertyFlags = do
 
   deviceHandle <- getDeviceHandle
 
@@ -266,12 +282,16 @@ withOneTimeSubmitCommandBuffer deviceHandle queueHandle commandPool c = do
 
 destroyBuffer :: MonadIO m => Buffer t a -> ShadersT m ()
 destroyBuffer b = case b of
-  BufferReadOnly {..} -> releaseBuffer rBufferReleaseKeys
-  BufferWritable {..} -> releaseBuffer wBufferReleaseKeys
- where
-  releaseBuffer (bufferReleaseKey, memoryReleaseKey) = do
-    release bufferReleaseKey
-    release memoryReleaseKey
+  BufferReadOnly {..} -> case rBufferReleaseKeys of
+    (bufferReleaseKey, memoryReleaseKey) -> do
+      release bufferReleaseKey
+      release memoryReleaseKey
+  BufferWritable {..} -> case wBufferReleaseKeys of
+    (buffer, memory, staging, stagingMem) -> do
+      release buffer
+      release memory
+      release staging
+      release stagingMem
 
 class BufferFormat a where
   type HostFormat a
@@ -286,6 +306,8 @@ data ToBuffer a b = ToBuffer
   (Kleisli ValueProdM a b)
   -- Aignment
   AlignMode
+  -- Vulkan buffer usage
+  VkBuffer.BufferUsageFlagBits
 
 -- Calculates element stride, padding for aligning elements.
 type AlignM =
@@ -326,6 +348,7 @@ alignWhenStd140 a =
     (Kleisli alignBufferWriter)
     (Kleisli alignValueProd)
     Align4Byte
+    Vk.zero
  where
   calcPadding x = do
     alignMode <- ask
@@ -349,17 +372,17 @@ alignWhenStd140 a =
     return x
 
 instance Category ToBuffer where
-  id = ToBuffer id id id Align4Byte
-  (ToBuffer a b c d) . (ToBuffer a' b' c' d') =
-    ToBuffer (a . a') (b . b') (c . c') (combineAlignMode d d')
+  id = ToBuffer id id id Align4Byte Vk.zero
+  (ToBuffer a b c d f) . (ToBuffer a' b' c' d' f') =
+    ToBuffer (a . a') (b . b') (c . c') (combineAlignMode d d') (f .|. f')
    where
     combineAlignMode AlignStd140 _           = AlignStd140
     combineAlignMode _           AlignStd140 = AlignStd140
     combineAlignMode alignMode   _           = alignMode
 
 instance Arrow ToBuffer where
-  arr f = ToBuffer (arr f) (arr f) (arr f) Align4Byte
-  first (ToBuffer a b c d) = ToBuffer (first a) (first b) (first c) d
+  arr f = ToBuffer (arr f) (arr f) (arr f) Align4Byte Vk.zero
+  first (ToBuffer a b c d f) = ToBuffer (first a) (first b) (first c) d f
 
 -- Atomic buffered values
 data B a = B {
@@ -377,8 +400,9 @@ data Uniform a = Uniform
 instance BufferFormat a => BufferFormat (Uniform a) where
   type HostFormat (Uniform a) = HostFormat a
   toBuffer =
-    let ToBuffer a b c _ = toBuffer :: ToBuffer (HostFormat a) a
-    in ToBuffer a b c AlignStd140 >>> arr (const Uniform)
+    let ToBuffer a b c _ usage = toBuffer :: ToBuffer (HostFormat a) a
+        usage' = usage .|. VkBuffer.BUFFER_USAGE_UNIFORM_BUFFER_BIT
+    in ToBuffer a b c AlignStd140 usage' >>> arr (const Uniform)
 
 instance BufferFormat (B ()) where
   type HostFormat (B ()) = ()
@@ -395,6 +419,7 @@ toBufferUnaligned =
     (Kleisli doBuffer)
     (Kleisli (const valueProd))
     Align4Byte
+    VkBuffer.BUFFER_USAGE_VERTEX_BUFFER_BIT
  where
   addOffset = do
     let sz = sizeOf (undefined :: a)

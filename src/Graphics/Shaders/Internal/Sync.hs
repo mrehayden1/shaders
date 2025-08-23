@@ -17,8 +17,8 @@ import Graphics.Shaders.Logger.Class
 import Graphics.Shaders.Internal.Device
 
 data SyncObjects = SyncObjects {
-   syncInFlightFence :: Vk.Fence,
-   syncRenderFinishedSemaphore :: Vk.Semaphore
+  syncInFlightFence :: Vk.Fence,
+  syncRenderFinishedSemaphore :: Vk.Semaphore
 }
 
 withSyncObjects :: (MonadAsyncException m, MonadLogger m, MonadResource m)

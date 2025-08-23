@@ -179,13 +179,13 @@ swap = do
   _ <- VkFence.waitForFences deviceHandle fences True maxBound
   VkFence.resetFences deviceHandle fences
 
+  logTrace "Presenting image"
   -- Queue the presentation of the current swap chain image
   let presentInfo = Vk.zero {
     VkSwap.imageIndices = V.singleton currentImageIndex,
     VkSwap.swapchains = V.singleton swapChainHandle,
     VkSwap.waitSemaphores = V.singleton syncRenderFinishedSemaphore
   }
-  logTrace "Presenting image"
   _ <- VkSwap.queuePresentKHR deviceQueueHandle presentInfo
 
   -- Increment the frame and swap chain image

@@ -26,7 +26,6 @@ import Vulkan.Core10.FundamentalTypes (Extent2D(Extent2D))
 import qualified Vulkan.Core10.FundamentalTypes as VkExtent2D (Extent2D(..))
 import qualified Vulkan.Core10.Handles as Vk
 import qualified Vulkan.Extensions.VK_KHR_surface as VkSurface
-import qualified Vulkan.Zero as Vk
 import Witherable
 
 import Control.Monad.Trans.Maybe.Extra
@@ -50,7 +49,7 @@ data SwapChainSettings = SwapChainSettings {
     swapSettingsTransform :: VkSurface.SurfaceTransformFlagBitsKHR
   } deriving (Show)
 
--- Returns a list of physical devices that have support everything we need
+-- Returns a list of physical devices that have support for everything we need
 -- sorted by a suitability score.
 getSuitableDevices :: (MonadIO m, MonadLogger m)
   => Vk.Instance
@@ -232,8 +231,8 @@ getSwapChainSupport device window surface = do
       swapSettingsTransform = transform
     }
 
--- Checks a device has at least one queue family that can do everything we want
--- and pick it. This is pretty much always going to be the case.
+-- Checks that a device has at least one queue family that can do everything
+-- we want and try to pick it. This is pretty much always going to be possible.
 findSuitableQueueFamilyIndex :: forall m. (MonadIO m, MonadLogger m)
   => VkSurface.SurfaceKHR
   -> Vk.PhysicalDevice
@@ -253,11 +252,20 @@ findSuitableQueueFamilyIndex surface device queueFamilyProperties = do
   -- IO.
   isSuitable :: Word32 -> VkDevice.QueueFamilyProperties -> MaybeT m Bool
   isSuitable i queue = do
-    canSurface <- liftIO $ supportsSurface i
-    return . (&& canSurface) . supportsGraphics $ queue
+    logTrace . printf "Checking queue family %d..." $ i
+    let supportsFlags = hasFlags queue
+    logTrace . ("Supports flags: " ++) $
+      if supportsFlags then "True" else "False"
+    canSurface <- checkSurfaceSupport i
+    return $ canSurface && supportsFlags
 
-  supportsGraphics = (/= Vk.zero) . (.&. Vk.QUEUE_GRAPHICS_BIT)
-                       . VkDevice.queueFlags
+  hasFlags = (== flags) . (.&. flags) . VkDevice.queueFlags
 
-  supportsSurface i = VkSurface.getPhysicalDeviceSurfaceSupportKHR device i
-                        surface
+  flags = Vk.QUEUE_GRAPHICS_BIT .|. Vk.QUEUE_TRANSFER_BIT
+
+  checkSurfaceSupport i = do
+    supportsSurface <- VkSurface.getPhysicalDeviceSurfaceSupportKHR device i
+      surface
+    logTrace . ("Has surface support: " ++) $
+      if supportsSurface then "True" else "False"
+    return supportsSurface

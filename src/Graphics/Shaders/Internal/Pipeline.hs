@@ -191,7 +191,7 @@ toPrimitiveStream getPrimitiveArray f = do
         VkPipeline.VertexInputBindingDescription
        )
   makeVertexBinding binding inputRate =
-    let ToBuffer (Kleisli calcAlign) _ (Kleisli valueProd) vAlignMode =
+    let ToBuffer (Kleisli calcAlign) _ (Kleisli valueProd) vAlignMode _ =
           toBuffer :: ToBuffer (HostFormat d) d
         ((_, pads), stride) = flip runState 0 . runWriterT
           . flip runReaderT vAlignMode . calcAlign $ undefined
@@ -453,8 +453,8 @@ runPipeline e CompiledPipeline{..} = do
   deviceHandle <- getDeviceHandle
   frameNumber <- ShadersT $ gets drawStateFrameIndex
 
-  -- Update the current frame's descriptor set to point to the correct buffers
-  -- and textures/samplers.
+  -- Update the current frame's descriptor set to point to the correct uniform
+  -- buffers and textures/samplers.
   let descriptorSet = compiledPipelineDescriptorSets V.! frameNumber
       uniformDescriptorWrites = flip fmap compiledPipelineUniformInput $
         \(bind, getter) ->
@@ -495,12 +495,14 @@ runPipeline e CompiledPipeline{..} = do
   logTrace "Acquiring next image from swapchain"
   (_, framebuffer) <- getCurrentSwapChainImage
 
-  -- Record and submit the command buffer.
-  logTrace "Submitting command buffer"
+  -- Record and submit the command buffers.
+  logTrace "Submitting command buffers"
+
   Frame{..} <- getCurrentFrame
   let SyncObjects{..} = frameSyncObjects
       commandBuffer = frameCommandBuffer
-  recordCommandBuffer commandBuffer framebuffer compiledPipeline descriptorSet
+
+  recordCommands commandBuffer framebuffer compiledPipeline descriptorSet
     compiledPipelinePrimitiveArray
 
   let submitInfos = fmap SomeStruct . V.singleton $ Vk.zero {
@@ -513,18 +515,41 @@ runPipeline e CompiledPipeline{..} = do
 
   return ()
  where
-  recordCommandBuffer :: VkCmd.CommandBuffer
+  recordCommands :: VkCmd.CommandBuffer
     -> Vk.Framebuffer
     -> VkPipeline.Pipeline
     -> Vk.DescriptorSet
     -> PrimitiveArrayGetter e
     -> ShadersT m ()
-  recordCommandBuffer commandBuffer framebuffer pipelineHandle descriptorSet
+  recordCommands commandBuffer framebuffer pipelineHandle descriptorSet
     primitiveArrayGetter = flip runCodensity return $ do
     -- Use Codensity to bracket command buffer recording and render pass.
     extent <- lift getExtent
     renderPass <- lift getRenderPass
     Codensity $ VkCmd.useCommandBuffer commandBuffer Vk.zero . (&) ()
+
+    -- Transfer data in staging buffers to their writable buffer.
+    forM_ compiledPipelineUniformInput $
+      \(_, getter) ->
+        withBufferGetter getter e (
+          (\case
+             BufferReadOnly{}   -> return ()
+             BufferWritable{..} -> do
+               VkCmd.cmdCopyBuffer
+                 commandBuffer
+                 wBufferStagingBufferHandle
+                 wBufferHandle
+                 (V.singleton $ VkCmd.BufferCopy
+                    Vk.zero
+                    Vk.zero
+                    (fromIntegral $ wBufferStride * wBufferNumElems)
+                 )
+          ) :: Buffer r a -> Codensity (ShadersT m) ()
+        )
+
+    -- TODO Barrier
+    --VkCmd.cmdPipelineBarrier
+
     let renderPassBeginInfo = Vk.zero {
       VkCmd.clearValues = V.fromList [
         VkCmd.Color (VkCmd.Float32 0 0 0 1)

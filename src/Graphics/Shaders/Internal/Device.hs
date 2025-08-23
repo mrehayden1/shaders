@@ -135,7 +135,7 @@ withRenderPass device format = do
       }
     ]
   }
-  fmap snd $ allocate
+  snd <$> allocate
     (VkPass.createRenderPass device passCreateInfo Nothing)
     (\p -> VkPass.destroyRenderPass device p Nothing)
 
