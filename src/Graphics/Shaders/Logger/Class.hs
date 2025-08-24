@@ -13,9 +13,16 @@ import Control.Monad.State
 import Control.Monad.Trans.Maybe
 import Control.Monad.Trans.Resource
 
-class MonadLogger m where
+class Monad m => MonadLogger m where
   loggerLevel :: m LogLevel
+  default loggerLevel :: (t m' ~ m, MonadTrans t, MonadLogger m') => m LogLevel
+  loggerLevel = lift loggerLevel
   loggerLog :: LogLevel -> String -> m ()
+  loggerLog lvl = lift . loggerLog lvl
+  default loggerLog :: (t m' ~ m, MonadTrans t, MonadLogger m')
+    => LogLevel
+    -> String
+    -> m ()
 
 data LogLevel = LogTrace | LogDebug | LogInfo | LogWarn | LogError | LogNone
  deriving (Eq, Ord, Show)
@@ -36,14 +43,14 @@ err :: MonadLogger m => String -> m ()
 err = loggerLog LogError
 
 
-instance (Monad m, MonadLogger m) => MonadLogger (ResourceT m) where
+instance (MonadLogger m) => MonadLogger (ResourceT m) where
   loggerLevel = lift loggerLevel
   loggerLog lvl = lift . loggerLog lvl
 
-instance (Monad m, MonadLogger m) => MonadLogger (MaybeT m) where
+instance (MonadLogger m) => MonadLogger (MaybeT m) where
   loggerLevel = lift loggerLevel
   loggerLog lvl = lift . loggerLog lvl
 
-instance (Monad m, MonadLogger m) => MonadLogger (StateT s m) where
+instance (MonadLogger m) => MonadLogger (StateT s m) where
   loggerLevel = lift loggerLevel
   loggerLog lvl = lift . loggerLog lvl

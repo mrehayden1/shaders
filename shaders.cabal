@@ -31,6 +31,7 @@ library
       Graphics.Shaders
       Graphics.Shaders.Base
       Graphics.Shaders.Buffer
+      Graphics.Shaders.Class
       Graphics.Shaders.Exception
       Graphics.Shaders.Expr
       Graphics.Shaders.FragmentStream
@@ -41,15 +42,16 @@ library
       Graphics.Shaders.Internal.Device.SwapChain
       Graphics.Shaders.Internal.Expr
       Graphics.Shaders.Internal.FragmentStream
+      Graphics.Shaders.Internal.Frames
       Graphics.Shaders.Internal.Instance
       Graphics.Shaders.Internal.Memory
       Graphics.Shaders.Internal.Pipeline
       Graphics.Shaders.Internal.PrimitiveArray
       Graphics.Shaders.Internal.PrimitiveStream
       Graphics.Shaders.Internal.Sampler
-      Graphics.Shaders.Internal.Sync
       Graphics.Shaders.Internal.Texture
       Graphics.Shaders.Internal.Window
+      Graphics.Shaders.Logger
       Graphics.Shaders.Logger.Base
       Graphics.Shaders.Logger.Class
       Graphics.Shaders.Orphans
@@ -60,7 +62,7 @@ library
       Graphics.Shaders.Texture
       Graphics.Shaders.Texture.Loader.TGA
       Graphics.Shaders.Uniform
-      Window
+      Graphics.Shaders.Window
   other-modules:
       Paths_shaders
   hs-source-dirs:
@@ -69,7 +71,9 @@ library
       AllowAmbiguousTypes
       Arrows
       BinaryLiterals
+      ConstraintKinds
       DataKinds
+      DefaultSignatures
       ExistentialQuantification
       FlexibleContexts
       FlexibleInstances
@@ -120,7 +124,9 @@ executable example
       AllowAmbiguousTypes
       Arrows
       BinaryLiterals
+      ConstraintKinds
       DataKinds
+      DefaultSignatures
       ExistentialQuantification
       FlexibleContexts
       FlexibleInstances

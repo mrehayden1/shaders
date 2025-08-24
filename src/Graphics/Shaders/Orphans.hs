@@ -5,6 +5,8 @@ import Control.Monad.Trans
 import Control.Monad.Exception
 import Control.Monad.Trans.Resource.Internal
 
+import Graphics.Shaders.Window
+
 instance MonadException m => MonadException (ResourceT m) where
   catch (ResourceT m) c =
     ResourceT $ \r -> m r `catch` \e -> unResourceT (c e) r
@@ -13,3 +15,5 @@ instance MonadException m => MonadException (ResourceT m) where
 instance MonadAsyncException m => MonadAsyncException (ResourceT m) where
   mask a = ResourceT $ \e -> mask $ \u -> unResourceT (a $ q u) e
     where q u (ResourceT b) = ResourceT (u . b)
+
+instance (MonadIO m, HasWindow m) => HasWindow (ResourceT m)

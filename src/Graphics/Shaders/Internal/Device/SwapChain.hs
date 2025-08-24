@@ -9,6 +9,7 @@ import Control.Monad.Exception
 import Control.Monad.Trans.Resource
 import Data.Vector (Vector)
 import qualified Data.Vector as V
+import Vulkan.Core10.AllocationCallbacks
 import Vulkan.Core10.Enums as Vk
 import Vulkan.Core10.FundamentalTypes as VkExtent2D (Extent2D(..))
 import Vulkan.Core10.Handles as Vk
@@ -31,13 +32,14 @@ data SwapChain = SwapChain {
   swapChainFramebuffers :: Vector Vk.Framebuffer
 } deriving (Show)
 
-withSwapChain :: (MonadAsyncException m, MonadLogger m)
-  => VkSurface.SurfaceKHR
+withSwapChain :: (MonadAsyncException m, MonadLogger m, MonadResource m)
+  => Maybe AllocationCallbacks
+  -> VkSurface.SurfaceKHR
   -> Vk.Device
   -> Vk.RenderPass
   -> SwapChainSettings
-  -> ResourceT m SwapChain
-withSwapChain surface device renderPass SwapChainSettings{..} = do
+  -> m SwapChain
+withSwapChain allocator surface device renderPass SwapChainSettings{..} = do
   debug "Creating swap chain."
   let swapChainImageFormat = VkSurface.format swapSettingsSurfaceFormat
 
@@ -59,9 +61,9 @@ withSwapChain surface device renderPass SwapChainSettings{..} = do
   }
 
   (_, swapChain) <- allocate
-    (VkSwapChain.createSwapchainKHR device swapChainCreateInfo Nothing)
+    (VkSwapChain.createSwapchainKHR device swapChainCreateInfo allocator)
     (\swapChain -> do
-      VkSwapChain.destroySwapchainKHR device swapChain Nothing
+      VkSwapChain.destroySwapchainKHR device swapChain allocator
     )
 
   -- Create swap chain images and image views.
@@ -85,12 +87,12 @@ withSwapChain surface device renderPass SwapChainSettings{..} = do
         },
         VkImageView.viewType = VkImageView.IMAGE_VIEW_TYPE_2D
       }
-      VkImageView.createImageView device imageViewCreateInfo Nothing
+      VkImageView.createImageView device imageViewCreateInfo allocator
     )
-    (mapM_ $ \i -> VkImageView.destroyImageView device i Nothing)
+    (mapM_ $ \i -> VkImageView.destroyImageView device i allocator)
 
-  framebuffers <-
-    withFramebuffers device renderPass swapImageViews swapSettingsExtent
+  framebuffers <- withFramebuffers allocator device renderPass swapImageViews
+    swapSettingsExtent
 
   return $ SwapChain {
     swapChainHandle = swapChain,
@@ -99,15 +101,16 @@ withSwapChain surface device renderPass SwapChainSettings{..} = do
     swapChainFramebuffers = framebuffers
   }
 
-withFramebuffers :: (MonadAsyncException m, MonadLogger m)
-  => Vk.Device
+withFramebuffers :: (MonadLogger m, MonadResource m)
+  => Maybe AllocationCallbacks
+  -> Vk.Device
   -> Vk.RenderPass
   -> Vector Vk.ImageView
   -> Extent2D
-  -> ResourceT m (Vector Vk.Framebuffer)
-withFramebuffers device renderPass imageViews imageExtent = do
+  -> m (Vector Vk.Framebuffer)
+withFramebuffers allocator device renderPass imageViews imageExtent = do
   debug "Creating framebuffers."
-  fmap snd $ allocate
+  snd <$> allocate
     (forM imageViews $ \imageView -> do
         let framebufferCreateInfo = Vk.zero {
           VkFramebuffer.attachments = V.singleton imageView,
@@ -116,8 +119,8 @@ withFramebuffers device renderPass imageViews imageExtent = do
           VkFramebuffer.renderPass = renderPass,
           VkFramebuffer.width = VkExtent2D.width imageExtent
         }
-        VkFramebuffer.createFramebuffer device framebufferCreateInfo Nothing
+        VkFramebuffer.createFramebuffer device framebufferCreateInfo allocator
     )
     (mapM_ $ \framebuffer ->
-       VkFramebuffer.destroyFramebuffer device framebuffer Nothing
+       VkFramebuffer.destroyFramebuffer device framebuffer allocator
     )

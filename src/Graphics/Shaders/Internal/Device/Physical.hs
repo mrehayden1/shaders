@@ -7,6 +7,7 @@ module Graphics.Shaders.Internal.Device.Physical (
 
 import Control.Monad
 import Control.Monad.IO.Class
+import Control.Monad.Trans
 import Control.Monad.Trans.Maybe
 import Data.Bits
 import Data.ByteString.UTF8 as UTF8
@@ -17,7 +18,6 @@ import Data.Ord
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word
-import qualified Graphics.UI.GLFW as GLFW
 import Text.Printf
 import qualified Vulkan.Core10.DeviceInitialization as VkDevice
 import qualified Vulkan.Core10.Enums as Vk
@@ -29,6 +29,7 @@ import qualified Vulkan.Extensions.VK_KHR_surface as VkSurface
 import Witherable
 
 import Control.Monad.Trans.Maybe.Extra
+import Graphics.Shaders.Internal.Window
 import Graphics.Shaders.Logger.Class
 
 -- A graphics enabled physical device, such as a GPU or CPU.
@@ -51,13 +52,12 @@ data SwapChainSettings = SwapChainSettings {
 
 -- Returns a list of physical devices that have support for everything we need
 -- sorted by a suitability score.
-getSuitableDevices :: (MonadIO m, MonadLogger m)
+getSuitableDevices :: (MonadIO m, MonadLogger m, HasWindow m)
   => Vk.Instance
-  -> GLFW.Window
   -> VkSurface.SurfaceKHR
   -> [ByteString]
   -> m [PhysicalDevice]
-getSuitableDevices vkInstance window surface requiredExtensions = do
+getSuitableDevices vkInstance surface requiredExtensions = do
   (_, devices) <- VkDevice.enumeratePhysicalDevices vkInstance
   debug . printf "%d devices found." . V.length $ devices
 
@@ -94,16 +94,20 @@ getSuitableDevices vkInstance window surface requiredExtensions = do
 
     -- Get the surface capabilities, formats, present modes and memory
     -- properties.
-    swapChainSupport <- getSwapChainSupport device window surface
+    swapChainSupport <- getSwapChainSupport device surface
+    logTrace "Dumping device swap chain support."
+    logTrace . show $ swapChainSupport
     memoryProperties <- VkDevice.getPhysicalDeviceMemoryProperties device
+    logTrace "Dumping device memory properties."
+    logTrace . show $ memoryProperties
 
     let physicalDevice = PhysicalDevice {
-            physicalDeviceHandle = device,
-            physicalDeviceMemoryProperties = memoryProperties,
-            physicalDeviceProperties = properties,
-            physicalDeviceQueueFamilyIndex = queueFamilyIndex,
-            physicalDeviceSwapChainSettings = swapChainSupport
-          }
+          physicalDeviceHandle = device,
+          physicalDeviceMemoryProperties = memoryProperties,
+          physicalDeviceProperties = properties,
+          physicalDeviceQueueFamilyIndex = queueFamilyIndex,
+          physicalDeviceSwapChainSettings = swapChainSupport
+        }
 
     return physicalDevice
 
@@ -133,12 +137,11 @@ scoreSuitability device =
 --   but we could fall back to PRESENT_MODE_FIFO_KHR (100% Windows support) if
 --   its not available.
 --
-getSwapChainSupport :: (MonadIO m, MonadLogger m)
+getSwapChainSupport :: (MonadIO m, MonadLogger m, HasWindow m)
   => Vk.PhysicalDevice
-  -> GLFW.Window
   -> VkSurface.SurfaceKHR
   -> MaybeT m SwapChainSettings
-getSwapChainSupport device window surface = do
+getSwapChainSupport device surface = do
   -- Note that we've already checked if there is a queue family that supports
   -- the VK_KHR_surface extension on this device as required by
   -- `vkGetPhysicalDeviceSurfaceCapabilitiesKHR`.
@@ -160,8 +163,7 @@ getSwapChainSupport device window surface = do
       else do
         -- We get the frame buffer size rather than the original window size
         -- so we get device pixels.
-        (frameBufferWidth, frameBufferHeight)
-          <- liftIO $ GLFW.getFramebufferSize window
+        (frameBufferWidth, frameBufferHeight) <- lift getWindowBufferSize
         let minImageExtent = VkSurface.minImageExtent surfaceCapabilities
             maxImageExtent = VkSurface.maxImageExtent surfaceCapabilities
             widthBounds = (VkExtent2D.width minImageExtent,

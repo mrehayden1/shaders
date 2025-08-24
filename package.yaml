@@ -14,7 +14,9 @@ default-extensions:
 - AllowAmbiguousTypes
 - Arrows
 - BinaryLiterals
+- ConstraintKinds
 - DataKinds
+- DefaultSignatures
 - ExistentialQuantification
 - FlexibleContexts
 - FlexibleInstances

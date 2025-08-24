@@ -12,6 +12,7 @@ import Data.List (union)
 import qualified Data.Vector as V
 import qualified Graphics.UI.GLFW as GLFW
 import Text.Printf
+import Vulkan.Core10.AllocationCallbacks
 import Vulkan.Core10.DeviceInitialization as VkApp (
   ApplicationInfo(..))
 import qualified Vulkan.Core10.DeviceInitialization as VkInit
@@ -25,9 +26,10 @@ import Vulkan.Zero as Vk
 
 import Graphics.Shaders.Logger.Class
 
-withInstance :: (MonadAsyncException m, MonadLogger m)
-  => ResourceT m Vk.Instance
-withInstance = do
+withInstance :: (MonadAsyncException m, MonadLogger m, MonadResource m)
+  => Maybe AllocationCallbacks
+  -> m Vk.Instance
+withInstance allocator = do
   logLevel <- loggerLevel
 
   when (logLevel <= LogTrace) $ do
@@ -56,11 +58,11 @@ withInstance = do
     VkApp.apiVersion = Vk13.API_VERSION_1_3
   }
 
-  -- Window extensions *should* always contain VK_KHR_surface, but we'll
-  -- add it anyway since we'll need it later.
   windowInstanceExtensions <- liftIO $
     mapM packCString =<< GLFW.getRequiredInstanceExtensions
 
+  -- Window extensions *should* always contain VK_KHR_surface, but we'll
+  -- add it anyway since we'll need it later.
   let extraInstanceExtensions = [
           VkSurface.KHR_SURFACE_EXTENSION_NAME
         ] <> [
@@ -70,13 +72,16 @@ withInstance = do
       requiredExtensions = V.fromList
         . (extraInstanceExtensions `union`) $ windowInstanceExtensions
       requiredLayers = V.fromList [
-          "VK_LAYER_KHRONOS_validation"
+          "VK_LAYER_KHRONOS_validation" :: String
         | logLevel <= LogTrace
         ]
       instanceInfo = Vk.zero {
         VkInit.applicationInfo = Just appInfo,
         VkInit.enabledExtensionNames = requiredExtensions,
-        VkInit.enabledLayerNames = requiredLayers
+        VkInit.enabledLayerNames = V.fromList [
+            "VK_LAYER_KHRONOS_validation"
+          | logLevel <= LogTrace
+          ]
       }
 
   logTrace . printf "Requesting extensions: %s" . show $ requiredExtensions
@@ -85,6 +90,6 @@ withInstance = do
   debug "Creating Vulkan instance..."
   snd <$> allocate
     (do
-      VkInit.createInstance instanceInfo Nothing
+      VkInit.createInstance instanceInfo allocator
     )
-    (`VkInit.destroyInstance` Nothing)
+    (flip VkInit.destroyInstance allocator)

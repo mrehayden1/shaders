@@ -20,7 +20,7 @@ module Graphics.Shaders.Internal.Buffer (
 
   writeBuffer,
 
-  createBuffer',
+  createVkBuffer,
 
   withOneTimeSubmitCommandBuffer
 ) where
@@ -43,7 +43,6 @@ import qualified Vulkan.Core10.Buffer as VkBuffer
 import qualified Vulkan.Core10.CommandBuffer as VkCmdBuffer
 import qualified Vulkan.Core10.CommandBufferBuilding as VkCmd
 import qualified Vulkan.Core10.CommandBufferBuilding as VkCopy (BufferCopy(..))
-import qualified Vulkan.Core10.DeviceInitialization as VkDevice
 import qualified Vulkan.Core10.Enums as Vk
 import qualified Vulkan.Core10.FundamentalTypes as Vk
 import qualified Vulkan.Core10.Handles as Vk
@@ -53,7 +52,7 @@ import qualified Vulkan.Core10.Queue as VkQueue
 import Vulkan.CStruct.Extends
 import qualified Vulkan.Zero as Vk
 
-import Graphics.Shaders.Base
+import Graphics.Shaders.Class
 import Graphics.Shaders.Logger.Class
 import Graphics.Shaders.Internal.Memory
 
@@ -69,22 +68,22 @@ data BufferAccess = ReadOnly | ReadWrite
 
 data Buffer (r :: BufferAccess) a where
   BufferReadOnly :: {
-      rBufferHandle :: Vk.Buffer,
-      rBufferNumElems :: Int,
-      rBufferReleaseKeys :: (ReleaseKey, ReleaseKey)
-    } -> Buffer 'ReadOnly a
+    rBufferHandle :: Vk.Buffer,
+    rBufferNumElems :: Int,
+    rBufferReleaseKeys :: (ReleaseKey, ReleaseKey)
+  } -> Buffer 'ReadOnly a
   BufferWritable :: {
-      -- Points to the offset of the current front sub-suffer.
-      wBufferHandle :: Vk.Buffer,
-      wBufferMemory :: Vk.DeviceMemory,
-      wBufferNumElems :: Int,
-      wBufferPads :: [Int],
-      wBufferPtr :: Ptr (),
-      wBufferReleaseKeys :: (ReleaseKey, ReleaseKey, ReleaseKey, ReleaseKey),
-      wBufferStagingBufferHandle :: Vk.Buffer,
-      wBufferStride :: Int,
-      wBufferWriter :: HostFormat a -> BufferWriterM a
-    } -> Buffer 'ReadWrite a
+    -- Points to the offset of the current front sub-suffer.
+    wBufferHandle :: Vk.Buffer,
+    wBufferMemory :: Vk.DeviceMemory,
+    wBufferNumElems :: Int,
+    wBufferPads :: [Int],
+    wBufferPtr :: Ptr (),
+    wBufferReleaseKeys :: (ReleaseKey, ReleaseKey, ReleaseKey, ReleaseKey),
+    wBufferStagingBufferHandle :: Vk.Buffer,
+    wBufferStride :: Int,
+    wBufferWriter :: HostFormat a -> BufferWriterM a
+  } -> Buffer 'ReadWrite a
 
 bufferHandle :: Buffer r a -> Vk.Buffer
 bufferHandle (BufferReadOnly h _ _)             = h
@@ -92,12 +91,10 @@ bufferHandle (BufferWritable h _ _ _ _ _ _ _ _) = h
 
 -- Allocate a writable buffer with `l` elements of type `a`
 createBuffer :: forall m a. (MonadAsyncException m, MonadLogger m,
-    BufferFormat a)
-  => Int -> ShadersT m (Buffer 'ReadWrite a)
+    MonadResource m, HasVulkan m, HasVulkanDevice m, BufferFormat a)
+  => Int -> m (Buffer 'ReadWrite a)
 createBuffer numVertices = do
-  deviceHandle <- getDeviceHandle
-  memoryProperties <- getDeviceMemoryProperties
-  numFrames <- ShadersT $ asks (V.length . graphicsFrames)
+  device <- getDevice
 
   let ToBuffer (Kleisli calcAlign) (Kleisli bufWriter) _ alignMode usageFlags
         = toBuffer :: ToBuffer (HostFormat a) a
@@ -105,7 +102,7 @@ createBuffer numVertices = do
   let ((_, pads), stride) = flip runState 0 . runWriterT
                               . flip runReaderT alignMode
                               . calcAlign $ undefined
-      bufferSize = fromIntegral $ stride * numVertices * numFrames
+      bufferSize = fromIntegral $ stride * numVertices
 
   debug "Creating writable buffer."
   let vertexBufferUsageFlags = VkBuffer.BUFFER_USAGE_TRANSFER_DST_BIT
@@ -113,7 +110,7 @@ createBuffer numVertices = do
       vertexBufferPropertyFlags = Vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT
         .|. Vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT
   (buffer, bufferReleaseKey, memory, memoryReleaseKey)
-    <- createBuffer' memoryProperties bufferSize vertexBufferUsageFlags
+    <- createVkBuffer bufferSize vertexBufferUsageFlags
          vertexBufferPropertyFlags
 
   -- Create a staging buffer
@@ -122,10 +119,10 @@ createBuffer numVertices = do
       stagingMemoryPropertyFlags = Vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT
         .|. Vk.MEMORY_PROPERTY_HOST_COHERENT_BIT
   (stagingBuffer, stagingBufferReleaseKey, stagingMem, stagingMemReleaseKey)
-    <- createBuffer' memoryProperties bufferSize stagingBufferUsageFlags
+    <- createVkBuffer bufferSize stagingBufferUsageFlags
          stagingMemoryPropertyFlags
 
-  ptr <- VkMemory.mapMemory deviceHandle stagingMem 0 bufferSize Vk.zero
+  ptr <- VkMemory.mapMemory device stagingMem 0 bufferSize Vk.zero
 
   return $ BufferWritable {
     wBufferHandle = buffer,
@@ -141,13 +138,12 @@ createBuffer numVertices = do
   }
 
 createBufferReadOnly :: forall a m. (MonadAsyncException m, MonadLogger m,
-    BufferFormat a)
+    MonadResource m, HasVulkan m, HasVulkanDevice m, BufferFormat a)
   => [HostFormat a]
-  -> ShadersT m (Buffer 'ReadOnly a)
+  -> m (Buffer 'ReadOnly a)
 createBufferReadOnly vertices = do
-  deviceHandle <- getDeviceHandle
-  memoryProperties <- getDeviceMemoryProperties
-  queueHandle <- getQueueHandle
+  deviceHandle <- getDevice
+  queueHandle <- getDeviceQueue
   commandPool <- getCommandPool
 
   let ToBuffer (Kleisli calcAlign) (Kleisli bufferer) _ alignMode usageFlags
@@ -165,7 +161,7 @@ createBufferReadOnly vertices = do
         .|. usageFlags
       vertexBufferPropertyFlags = Vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT
   (vertexBuffer, vertexBufferReleaseKey, _, vertexMemoryReleaseKey)
-    <- createBuffer' memoryProperties bufferSize vertexBufferUsageFlags
+    <- createVkBuffer bufferSize vertexBufferUsageFlags
          vertexBufferPropertyFlags
 
   -- Create a staging buffer
@@ -174,7 +170,7 @@ createBufferReadOnly vertices = do
       stagingMemoryPropertyFlags = Vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT
         .|. Vk.MEMORY_PROPERTY_HOST_COHERENT_BIT
   (stagingBuffer, stagingBufferReleaseKey, stagingMem, stagingMemReleaseKey)
-    <- createBuffer' memoryProperties bufferSize stagingBufferUsageFlags
+    <- createVkBuffer bufferSize stagingBufferUsageFlags
          stagingMemoryPropertyFlags
 
   debug "Filling staging buffer."
@@ -201,24 +197,23 @@ createBufferReadOnly vertices = do
   }
 
 writeBuffer :: MonadIO m => Buffer 'ReadWrite a -> [HostFormat a]
-  -> ShadersT m ()
+  -> m ()
 writeBuffer BufferWritable{..} =
   -- Put the vertices in the staging buffer to be copied to the front buffer
   -- before draw commands are issued in the next frame.
   liftIO . flip evalStateT (wBufferPtr, wBufferPads) . mapM_ wBufferWriter
 
--- createBuffer' - Create a Vk buffer and allocate device memory for it.
-createBuffer' :: (MonadAsyncException m, MonadLogger m,
-  MonadReader GraphicsEnv m, MonadResource m)
-  => VkDevice.PhysicalDeviceMemoryProperties
-  -> Vk.DeviceSize
+-- createVkBuffer - Create a Vk buffer and allocate device memory for it.
+createVkBuffer :: (MonadAsyncException m, MonadLogger m, MonadResource m,
+    HasVulkan m, HasVulkanDevice m)
+  => Vk.DeviceSize
   -> Vk.BufferUsageFlagBits
   -> Vk.MemoryPropertyFlags
   -> m (Vk.Buffer, ReleaseKey, Vk.DeviceMemory, ReleaseKey)
-createBuffer' memoryProperties bufferSize bufferUsageFlags
+createVkBuffer bufferSize bufferUsageFlags
     memoryPropertyFlags = do
-
-  deviceHandle <- getDeviceHandle
+  allocator <- getVulkanAllocator
+  device <- getDevice
 
   let bufferInfo = Vk.zero {
         VkBuffer.sharingMode = VkBuffer.SHARING_MODE_EXCLUSIVE,
@@ -226,17 +221,17 @@ createBuffer' memoryProperties bufferSize bufferUsageFlags
         VkBuffer.usage = bufferUsageFlags
       }
   (bufferReleaseKey, buffer) <- allocate
-    (VkBuffer.createBuffer deviceHandle bufferInfo Nothing)
-    (\b -> VkBuffer.destroyBuffer deviceHandle b Nothing)
+    (VkBuffer.createBuffer device bufferInfo allocator)
+    (\b -> VkBuffer.destroyBuffer device b allocator)
 
   memoryRequirements <-
-    VkMemRequirements.getBufferMemoryRequirements deviceHandle buffer
+    VkMemRequirements.getBufferMemoryRequirements device buffer
 
   -- Allocate and bind buffer memory
-  (memoryReleaseKey, memory) <- allocateMemory memoryProperties
-    memoryRequirements memoryPropertyFlags
+  (memoryReleaseKey, memory) <- allocateMemory memoryRequirements
+    memoryPropertyFlags
 
-  VkMemRequirements.bindBufferMemory deviceHandle buffer memory 0
+  VkMemRequirements.bindBufferMemory device buffer memory 0
 
   return (buffer, bufferReleaseKey, memory, memoryReleaseKey)
 
@@ -280,7 +275,7 @@ withOneTimeSubmitCommandBuffer deviceHandle queueHandle commandPool c = do
   VkCmdBuffer.freeCommandBuffers deviceHandle commandPool cmdBuffers
 
 
-destroyBuffer :: MonadIO m => Buffer t a -> ShadersT m ()
+destroyBuffer :: MonadIO m => Buffer t a -> m ()
 destroyBuffer b = case b of
   BufferReadOnly {..} -> case rBufferReleaseKeys of
     (bufferReleaseKey, memoryReleaseKey) -> do

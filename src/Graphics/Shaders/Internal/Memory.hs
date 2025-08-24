@@ -4,7 +4,6 @@ module Graphics.Shaders.Internal.Memory (
 
 import Control.Monad
 import Control.Monad.Exception
-import Control.Monad.Reader
 import Control.Monad.Trans.Resource
 import Data.Bits
 import qualified Data.Vector as V
@@ -16,18 +15,19 @@ import qualified Vulkan.Core10.MemoryManagement as VkMemRequirements
 import qualified Vulkan.Zero as Vk
 
 import Data.Bits.Extra
-import Graphics.Shaders.Base
+import Graphics.Shaders.Class
 import Graphics.Shaders.Exception
 import Graphics.Shaders.Logger.Class
 
-allocateMemory :: (MonadAsyncException m, MonadLogger m,
-  MonadReader GraphicsEnv m, MonadResource m)
-  => VkDevice.PhysicalDeviceMemoryProperties
-  -> VkMemRequirements.MemoryRequirements
+allocateMemory :: (MonadAsyncException m, MonadLogger m, MonadResource m,
+    HasVulkan m, HasVulkanDevice m)
+  => VkMemRequirements.MemoryRequirements
   -> Vk.MemoryPropertyFlags
   -> m (ReleaseKey, Vk.DeviceMemory)
-allocateMemory memoryProperties memoryRequirements memoryPropertyFlags = do
-  deviceHandle <- getDeviceHandle
+allocateMemory memoryRequirements memoryPropertyFlags = do
+  memoryProperties <- getDeviceMemoryProperties
+  allocator <- getVulkanAllocator
+  device <- getDevice
   -- Find compatible memory
   let memoryTypeIndices = V.imapMaybe getMemoryTypeIndexIfCompatible
         . VkDevice.memoryTypes
@@ -44,8 +44,8 @@ allocateMemory memoryProperties memoryRequirements memoryPropertyFlags = do
         VkMemory.allocationSize = VkMemRequirements.size memoryRequirements,
         VkMemory.memoryTypeIndex = fromIntegral memoryTypeIndex
       }
-  allocate (VkMemory.allocateMemory deviceHandle allocInfo Nothing)
-    (\m -> VkMemory.freeMemory deviceHandle m Nothing)
+  allocate (VkMemory.allocateMemory device allocInfo allocator)
+    (\m -> VkMemory.freeMemory device m allocator)
  where
   getMemoryTypeIndexIfCompatible i t =
     if VkDevice.propertyFlags t .&&. memoryPropertyFlags

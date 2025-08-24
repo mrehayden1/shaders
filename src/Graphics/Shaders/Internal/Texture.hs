@@ -5,7 +5,6 @@ module Graphics.Shaders.Internal.Texture (
 
 import Control.Monad.Exception
 import Control.Monad.IO.Class
-import Control.Monad.Trans
 import Control.Monad.Trans.Resource
 import Data.Bits
 import Data.ByteString.Internal as BS
@@ -30,7 +29,7 @@ import qualified Vulkan.Core10.Sampler as VkSampler
 import Vulkan.CStruct.Extends
 import Vulkan.Zero as Vk
 
-import Graphics.Shaders.Base
+import Graphics.Shaders.Class
 import Graphics.Shaders.Exception
 import Graphics.Shaders.Internal.Buffer
 import Graphics.Shaders.Internal.Memory
@@ -43,12 +42,13 @@ data Texture = Texture {
   textureSampler :: Vk.Sampler
 }
 
-loadTexture :: (MonadAsyncException m, MonadLogger m)
+loadTexture :: (MonadAsyncException m, MonadLogger m, MonadResource m,
+    HasVulkan m, HasVulkanDevice m)
   => FilePath
-  -> ShadersT m Texture
+  -> m Texture
 loadTexture fileName = do
-  deviceHandle <- getDeviceHandle
-  memoryProperties <- getDeviceMemoryProperties
+  allocator <- getVulkanAllocator
+  device <- getDevice
 
   debug "Loading texture image."
   TGA{..} <- decodeFile fileName
@@ -73,16 +73,16 @@ loadTexture fileName = do
       stagingMemoryPropertyFlags = Vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT
         .|. Vk.MEMORY_PROPERTY_HOST_COHERENT_BIT
   (buffer, bufferReleaseKey, bufferMemory, bufferMemoryReleaseKey)
-    <- createBuffer' memoryProperties bufferSize stagingBufferUsageFlags
+    <- createVkBuffer bufferSize stagingBufferUsageFlags
          stagingMemoryPropertyFlags
 
   -- Fill the buffer
   debug "Filling staging buffer."
-  bufferPtr <- VkMemory.mapMemory deviceHandle bufferMemory 0 bufferSize
+  bufferPtr <- VkMemory.mapMemory device bufferMemory 0 bufferSize
     Vk.zero
   liftIO . withForeignPtr imageBytes $ \ptr ->
     copyBytes (castPtr bufferPtr) ptr imageNumBytes
-  VkMemory.unmapMemory deviceHandle bufferMemory
+  VkMemory.unmapMemory device bufferMemory
 
   debug "Copying image."
   transitionImageLayout image Vk.IMAGE_LAYOUT_UNDEFINED
@@ -103,20 +103,21 @@ loadTexture fileName = do
 
   debug "Creating sampler."
   (samplerReleaseKey, sampler) <- allocate
-    (VkSampler.createSampler deviceHandle samplerInfo Nothing)
-    (\s -> VkSampler.destroySampler deviceHandle s Nothing)
+    (VkSampler.createSampler device samplerInfo allocator)
+    (\s -> VkSampler.destroySampler device s allocator)
 
   let releaseKeys = (imageReleaseKey, memoryReleaseKey, imageViewReleaseKey,
         samplerReleaseKey)
 
   return $ Texture imageView releaseKeys sampler
 
-createImageView :: (MonadAsyncException m)
+createImageView :: (MonadResource m, HasVulkan m, HasVulkanDevice m)
   => Vk.Image
   -> Vk.Format
-  -> ShadersT m (ReleaseKey, Vk.ImageView)
+  -> m (ReleaseKey, Vk.ImageView)
 createImageView image format = do
-  deviceHandle <- getDeviceHandle
+  allocator <- getVulkanAllocator
+  device <- getDevice
 
   allocate
     (do
@@ -130,21 +131,22 @@ createImageView image format = do
         },
         VkImageView.viewType = VkImageView.IMAGE_VIEW_TYPE_2D
       }
-      VkImageView.createImageView deviceHandle imageViewCreateInfo Nothing
+      VkImageView.createImageView device imageViewCreateInfo allocator
     )
-    (\v -> VkImageView.destroyImageView deviceHandle v Nothing)
+    (\v -> VkImageView.destroyImageView device v allocator)
 
-createImage :: (MonadAsyncException m, MonadLogger m)
+createImage :: (MonadAsyncException m, MonadLogger m, MonadResource m,
+    HasVulkan m, HasVulkanDevice m)
   => Int
   -> Int
   -> Vk.Format
   -> Vk.ImageTiling
   -> Vk.ImageUsageFlags
   -> Vk.MemoryPropertyFlags
-  -> ShadersT m (Vk.Image, ReleaseKey, VkMemory.DeviceMemory, ReleaseKey)
+  -> m (Vk.Image, ReleaseKey, VkMemory.DeviceMemory, ReleaseKey)
 createImage width height format tiling usageFlags memoryPropertyFlags = do
-  deviceHandle <- getDeviceHandle
-  memoryProperties <- getDeviceMemoryProperties
+  allocator <- getVulkanAllocator
+  device <- getDevice
 
   let imageInfo = Vk.zero {
     VkImage.arrayLayers = 1,
@@ -163,31 +165,32 @@ createImage width height format tiling usageFlags memoryPropertyFlags = do
     VkImage.usage = usageFlags
   }
   (imageReleaseKey, image) <- allocate
-    (VkImage.createImage deviceHandle imageInfo Nothing)
-    (\image -> VkImage.destroyImage deviceHandle image Nothing)
+    (VkImage.createImage device imageInfo allocator)
+    (\image -> VkImage.destroyImage device image allocator)
 
   memoryRequirements <-
-    VkMemory.getImageMemoryRequirements deviceHandle image
+    VkMemory.getImageMemoryRequirements device image
 
-  (memoryReleaseKey, memory) <- allocateMemory memoryProperties
-    memoryRequirements memoryPropertyFlags
+  (memoryReleaseKey, memory) <- allocateMemory memoryRequirements
+    memoryPropertyFlags
 
-  VkMemory.bindImageMemory deviceHandle image memory 0
+  VkMemory.bindImageMemory device image memory 0
 
   return (image, imageReleaseKey, memory, memoryReleaseKey)
 
 
-transitionImageLayout :: (MonadAsyncException m, MonadLogger m)
+transitionImageLayout :: (MonadAsyncException m, MonadLogger m,
+    HasVulkanDevice m)
   => Vk.Image
   -> Vk.ImageLayout
   -> Vk.ImageLayout
-  -> ShadersT m ()
+  -> m ()
 transitionImageLayout image oldLayout newLayout = do
-  deviceHandle <- getDeviceHandle
-  queueHandle <- getQueueHandle
+  device <- getDevice
+  queue <- getDeviceQueue
   commandPool <- getCommandPool
 
-  withOneTimeSubmitCommandBuffer deviceHandle queueHandle commandPool $
+  withOneTimeSubmitCommandBuffer device queue commandPool $
     \commandBuffer -> do
       (srcStage, dstStage, srcAccessMask, dstAccessMask) <-
         case (oldLayout, newLayout) of
@@ -207,7 +210,7 @@ transitionImageLayout image oldLayout newLayout = do
               Vk.ACCESS_TRANSFER_WRITE_BIT,
               Vk.ACCESS_SHADER_READ_BIT
             )
-          _ -> lift . throw $ ShadersUnsupportedTransitionException
+          _ -> throw ShadersUnsupportedTransitionException
 
       let imageMemoryBarrier = Vk.zero {
         VkBarrier.dstAccessMask = dstAccessMask,
@@ -228,18 +231,18 @@ transitionImageLayout image oldLayout newLayout = do
         mempty . V.singleton . SomeStruct $ imageMemoryBarrier
 
 
-copyBufferToImage :: (MonadAsyncException m, MonadLogger m)
+copyBufferToImage :: (MonadAsyncException m, MonadLogger m, HasVulkanDevice m)
   => Vk.Buffer
   -> Vk.Image
   -> Int
   -> Int
-  -> ShadersT m ()
+  -> m ()
 copyBufferToImage buffer image width height = do
-  deviceHandle <- getDeviceHandle
-  queueHandle <- getQueueHandle
+  device <- getDevice
+  queue <- getDeviceQueue
   commandPool <- getCommandPool
 
-  withOneTimeSubmitCommandBuffer deviceHandle queueHandle commandPool $
+  withOneTimeSubmitCommandBuffer device queue commandPool $
     \commandBuffer -> do
       let imageCopy = Vk.zero {
         VkImageCopy.imageSubresource = Vk.zero {
