@@ -10,6 +10,7 @@ module Graphics.Shaders (
   runShadersT,
 
   swap,
+  windowShouldClose,
   awaitIdle
 ) where
 

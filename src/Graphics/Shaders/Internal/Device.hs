@@ -13,6 +13,7 @@ import Data.ByteString.UTF8 as UTF8
 import qualified Data.Vector as V
 import Data.Word
 import Graphics.UI.GLFW as GLFW
+import Vulkan.Core10.AllocationCallbacks
 import qualified Vulkan.Core10.CommandPool as VkPool
 import qualified Vulkan.Core10.Device as VkDevice
 import qualified Vulkan.Core10.DeviceInitialization as VkDevice
@@ -45,10 +46,11 @@ requiredDeviceExtensions = [VkSwapChain.KHR_SWAPCHAIN_EXTENSION_NAME]
 
 withDevice :: (MonadAsyncException m, MonadLogger m)
   => Vk.Instance
+  -> Maybe AllocationCallbacks
   -> GLFW.Window
   -> VkSurface.SurfaceKHR
   -> ResourceT m Device
-withDevice vkInstance window surface = do
+withDevice vkInstance allocator window surface = do
   debug "Creating logical device..."
   devices <- lift $
     getSuitableDevices vkInstance window surface requiredDeviceExtensions
@@ -81,19 +83,21 @@ withDevice vkInstance window surface = do
           Nothing
 
   (_, vkDevice) <- allocate
-    (VkDevice.createDevice physicalDeviceHandle deviceCreateInfo Nothing)
-    (\device -> VkDevice.destroyDevice device Nothing)
+    (VkDevice.createDevice physicalDeviceHandle deviceCreateInfo allocator)
+    (\device -> VkDevice.destroyDevice device allocator)
 
   queue <- VkQueue.getDeviceQueue vkDevice physicalDeviceQueueFamilyIndex 0
 
-  commandPool <- withCommandPool vkDevice physicalDeviceQueueFamilyIndex
+  commandPool <- withCommandPool allocator vkDevice
+    physicalDeviceQueueFamilyIndex
 
   let SwapChainSettings{..} = physicalDeviceSwapChainSettings
       surfaceFormat = VkSurface.format swapSettingsSurfaceFormat
-  renderPass <- withRenderPass vkDevice surfaceFormat
+  renderPass <- withRenderPass allocator vkDevice surfaceFormat
 
   swapChain <-
-    withSwapChain surface vkDevice renderPass physicalDeviceSwapChainSettings
+    withSwapChain allocator surface vkDevice renderPass
+      physicalDeviceSwapChainSettings
 
   let device = Device {
     deviceCommandPool = commandPool,
@@ -107,10 +111,11 @@ withDevice vkInstance window surface = do
   return device
 
 withRenderPass :: (MonadAsyncException m, MonadLogger m)
-  => Vk.Device
+  => Maybe AllocationCallbacks
+  -> Vk.Device
   -> Vk.Format
   -> ResourceT m Vk.RenderPass
-withRenderPass device format = do
+withRenderPass allocator device format = do
   debug "Creating render pass."
   let passCreateInfo = Vk.zero {
     VkPass.attachments = V.fromList [
@@ -136,20 +141,21 @@ withRenderPass device format = do
     ]
   }
   snd <$> allocate
-    (VkPass.createRenderPass device passCreateInfo Nothing)
-    (\p -> VkPass.destroyRenderPass device p Nothing)
+    (VkPass.createRenderPass device passCreateInfo allocator)
+    (\p -> VkPass.destroyRenderPass device p allocator)
 
 withCommandPool :: (MonadAsyncException m, MonadLogger m)
-  => Vk.Device
+  => Maybe AllocationCallbacks
+  -> Vk.Device
   -> Word32
   -> ResourceT m Vk.CommandPool
-withCommandPool device queueFamilyIndex = do
+withCommandPool allocator device queueFamilyIndex = do
   let poolCreateInfo = Vk.zero {
     VkPool.flags = VkPool.COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
     VkPool.queueFamilyIndex = queueFamilyIndex
   }
 
   debug "Creating command pool."
-  fmap snd $ allocate
-    (VkPool.createCommandPool device poolCreateInfo Nothing)
-    (\pool -> VkPool.destroyCommandPool device pool Nothing)
+  snd <$> allocate
+    (VkPool.createCommandPool device poolCreateInfo allocator)
+    (\pool -> VkPool.destroyCommandPool device pool allocator)

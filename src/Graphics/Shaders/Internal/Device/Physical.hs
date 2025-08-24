@@ -95,15 +95,19 @@ getSuitableDevices vkInstance window surface requiredExtensions = do
     -- Get the surface capabilities, formats, present modes and memory
     -- properties.
     swapChainSupport <- getSwapChainSupport device window surface
+    logTrace "Dumping device swap chain support."
+    logTrace . show $ swapChainSupport
     memoryProperties <- VkDevice.getPhysicalDeviceMemoryProperties device
+    logTrace "Dumping device memory properties."
+    logTrace . show $ memoryProperties
 
     let physicalDevice = PhysicalDevice {
-            physicalDeviceHandle = device,
-            physicalDeviceMemoryProperties = memoryProperties,
-            physicalDeviceProperties = properties,
-            physicalDeviceQueueFamilyIndex = queueFamilyIndex,
-            physicalDeviceSwapChainSettings = swapChainSupport
-          }
+          physicalDeviceHandle = device,
+          physicalDeviceMemoryProperties = memoryProperties,
+          physicalDeviceProperties = properties,
+          physicalDeviceQueueFamilyIndex = queueFamilyIndex,
+          physicalDeviceSwapChainSettings = swapChainSupport
+        }
 
     return physicalDevice
 

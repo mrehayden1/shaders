@@ -229,8 +229,9 @@ compilePipeline :: forall e m t. (MonadAsyncException m, MonadLogger m,
   => Pipeline t e (FragmentStream (V4 (S F Float)))
   -> ShadersT m (CompiledPipeline e)
 compilePipeline pipeline = do
-  framesInFlight <- ShadersT . asks $ V.length . graphicsFrames
-  deviceHandle <- getDeviceHandle
+  allocator <- getAllocator
+  device <- getDevice
+  numFrames <- getNumFrames
   renderPass <- getRenderPass
 
   -- TODO replace all this pattern matching with a `runPipeline`
@@ -252,13 +253,13 @@ compilePipeline pipeline = do
     VkDescr.bindings = V.fromList descrSetLayoutBindings
   }
   (_, descriptorSetLayout) <- allocate
-    (VkDescr.createDescriptorSetLayout deviceHandle descriptorSetLayoutInfo
-      Nothing)
-    (\l -> VkDescr.destroyDescriptorSetLayout deviceHandle l Nothing)
+    (VkDescr.createDescriptorSetLayout device descriptorSetLayoutInfo
+      allocator)
+    (\l -> VkDescr.destroyDescriptorSetLayout device l allocator)
 
   debug "Creating descriptor pool."
   let descriptorPoolInfo = Vk.zero {
-        VkDescr.maxSets = fromIntegral framesInFlight,
+        VkDescr.maxSets = fromIntegral numFrames,
         VkDescr.poolSizes = V.fromList [
           VkDescr.DescriptorPoolSize
             Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER
@@ -269,17 +270,17 @@ compilePipeline pipeline = do
         ]
       }
   (_, descriptorPool) <- allocate
-    (VkDescr.createDescriptorPool deviceHandle descriptorPoolInfo Nothing)
-    (\p -> VkDescr.destroyDescriptorPool deviceHandle p Nothing)
+    (VkDescr.createDescriptorPool device descriptorPoolInfo allocator)
+    (\p -> VkDescr.destroyDescriptorPool device p allocator)
 
   debug "Allocating descriptor sets."
   let descriptorSetInfo = Vk.zero {
     VkDescr.descriptorPool = descriptorPool,
-    VkDescr.setLayouts = V.replicate framesInFlight descriptorSetLayout
+    VkDescr.setLayouts = V.replicate numFrames descriptorSetLayout
   }
   -- Descriptor sets are freed when the pool is destroyed.
   descriptorSets <-
-    VkDescr.allocateDescriptorSets deviceHandle descriptorSetInfo
+    VkDescr.allocateDescriptorSets device descriptorSetInfo
 
   -- Compile the shaders
   let uniformDecls = fmap uniformDeclaration uniforms
@@ -303,7 +304,7 @@ compilePipeline pipeline = do
         <> "void main() {\n"
         <> vShaderBody
         <> "}"
-  vertexShaderModule <- createShader deviceHandle Vertex vShaderSource
+  vertexShaderModule <- createShader device Vertex vShaderSource
 
   fShaderBody <- liftIO . execExprM 2 $ do
     let V4 r g b a = fOut
@@ -321,15 +322,15 @@ compilePipeline pipeline = do
         <> "void main() {\n"
         <> fShaderBody
         <> "}"
-  fragmentShaderModule <- createShader deviceHandle Fragment fShaderSource
+  fragmentShaderModule <- createShader device Fragment fShaderSource
 
   debug "Creating pipeline layout."
   let layoutInfo = Vk.zero {
     VkPipeline.setLayouts = V.singleton descriptorSetLayout
   }
   (_, layout) <- allocate
-    (VkPipeline.createPipelineLayout deviceHandle layoutInfo Nothing)
-    (\l -> VkPipeline.destroyPipelineLayout deviceHandle l Nothing)
+    (VkPipeline.createPipelineLayout device layoutInfo allocator)
+    (\l -> VkPipeline.destroyPipelineLayout device l allocator)
 
   let pipelineCreateInfos = V.singleton . SomeStruct $ Vk.zero {
     VkPipeline.colorBlendState = Just . SomeStruct $ Vk.zero {
@@ -389,11 +390,11 @@ compilePipeline pipeline = do
   debug "Creating pipeline."
   (_, (result, vkPipeline)) <- allocate
     (do (result, ps) <-
-          VkPipeline.createGraphicsPipelines deviceHandle Vk.zero
-            pipelineCreateInfos Nothing
+          VkPipeline.createGraphicsPipelines device Vk.zero
+            pipelineCreateInfos allocator
         return (result, V.head ps)
     )
-    (\(_, p) -> VkPipeline.destroyPipeline deviceHandle p Nothing)
+    (\(_, p) -> VkPipeline.destroyPipeline device p allocator)
 
   when (result /= Vk.SUCCESS) $
     warn . printf "Non success result: %s" . show $ result
@@ -413,16 +414,14 @@ compilePipeline pipeline = do
 data ShaderStage = Vertex | Fragment
  deriving Show
 
-shaderFileExt :: ShaderStage -> ByteString
-shaderFileExt Fragment = ".frag"
-shaderFileExt Vertex   = ".vert"
-
-createShader :: (MonadAsyncException m, MonadLogger m)
+createShader :: (MonadAsyncException m, MonadLogger m, MonadResource m,
+    HasVulkan m)
   => VkDevice.Device
   -> ShaderStage
   -> ByteString
-  -> ShadersT m VkShader.ShaderModule
+  -> m VkShader.ShaderModule
 createShader device stage code = do
+  allocator <- getAllocator
   let stageName = fmap toLower . show $ stage
   debug . printf "Creating %s shader module." $ stageName
   debug "Compiling shader source."
@@ -435,14 +434,20 @@ createShader device stage code = do
     VkShader.code = compiledCode
   }
   snd <$> allocate
-    (VkShader.createShaderModule device createInfo Nothing)
-    (\s -> VkShader.destroyShaderModule device s Nothing)
+    (VkShader.createShaderModule device createInfo allocator)
+    (\s -> VkShader.destroyShaderModule device s allocator)
  where
   compile :: forall (s :: SpirV.ShaderKind). SpirV.IsShaderKind s
     => IO ByteString
   compile = do
+    let shaderFileExt = case stage of
+          Fragment -> ".frag"
+          Vertex   -> ".vert"
+
     SpirV.S compiledCode :: SpirV.S s <-
-      SpirV.compile code ("<no name>" <> shaderFileExt stage) "main" (def :: SpirV.C ())
+      SpirV.compile code ("<no name>" <> shaderFileExt) "main"
+        (def :: SpirV.C ())
+
     return compiledCode
 
 runPipeline :: forall m e. (MonadIO m, MonadLogger m)
@@ -450,8 +455,8 @@ runPipeline :: forall m e. (MonadIO m, MonadLogger m)
   -> CompiledPipeline e
   -> ShadersT m ()
 runPipeline e CompiledPipeline{..} = do
-  deviceHandle <- getDeviceHandle
-  frameNumber <- ShadersT $ gets drawStateFrameIndex
+  device <- getDevice
+  (frameNumber, Frame{..}, framebuffer) <- getCurrentFrame
 
   -- Update the current frame's descriptor set to point to the correct uniform
   -- buffers and textures/samplers.
@@ -486,19 +491,11 @@ runPipeline e CompiledPipeline{..} = do
           }
       descriptorWrites = V.fromList $
         uniformDescriptorWrites <> samplerDescriptorWrites
-  VkDescr.updateDescriptorSets deviceHandle descriptorWrites V.empty
-
-  -- Get the framebuffer for the next image in the swapchain by getting the
-  -- swapchain image index.
-  -- Ignore TIMEOUT and NOT_READY since we're not using a fence or semaphore
-  -- and ignore SUBOPTIMAL_KHR.
-  logTrace "Acquiring next image from swapchain"
-  (_, framebuffer) <- getCurrentSwapChainImage
+  VkDescr.updateDescriptorSets device descriptorWrites V.empty
 
   -- Record and submit the command buffers.
   logTrace "Submitting command buffers"
 
-  Frame{..} <- getCurrentFrame
   let SyncObjects{..} = frameSyncObjects
       commandBuffer = frameCommandBuffer
 
@@ -510,8 +507,8 @@ runPipeline e CompiledPipeline{..} = do
       fmap VkCmd.commandBufferHandle . V.fromList $ [ commandBuffer ],
     VkQueue.signalSemaphores = V.singleton syncRenderFinishedSemaphore
   }
-  queueHandle <- getQueueHandle
-  VkQueue.queueSubmit queueHandle submitInfos syncInFlightFence
+  queue <- getQueue
+  VkQueue.queueSubmit queue submitInfos syncInFlightFence
 
   return ()
  where
@@ -524,7 +521,7 @@ runPipeline e CompiledPipeline{..} = do
   recordCommands commandBuffer framebuffer pipelineHandle descriptorSet
     primitiveArrayGetter = flip runCodensity return $ do
     -- Use Codensity to bracket command buffer recording and render pass.
-    extent <- lift getExtent
+    extent <- lift getSwapChainExtent
     renderPass <- lift getRenderPass
     Codensity $ VkCmd.useCommandBuffer commandBuffer Vk.zero . (&) ()
 
