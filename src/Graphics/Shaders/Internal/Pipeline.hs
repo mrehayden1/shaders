@@ -359,6 +359,7 @@ compilePipeline pipeline = do
     },
     VkPipeline.rasterizationState = Just . SomeStruct $ Vk.zero {
       VkPipeline.cullMode = VkPipeline.CULL_MODE_BACK_BIT,
+      VkPipeline.frontFace = VkPipeline.FRONT_FACE_COUNTER_CLOCKWISE,
       VkPipeline.lineWidth = 1,
       VkPipeline.polygonMode = VkPipeline.POLYGON_MODE_FILL
     },
