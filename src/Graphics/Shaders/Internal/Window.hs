@@ -33,12 +33,13 @@ import Vulkan.Extensions.VK_KHR_surface as VkSurface
 import Graphics.Shaders.Exception
 import Graphics.Shaders.Logger.Class
 
-newtype WindowEvents = WindowEvents {
+data WindowEvents = WindowEvents {
+  windowCursorPosEvent :: Maybe (Float, Float),
   windowKeyEvents :: [(GLFW.Key, GLFW.KeyState, GLFW.ModifierKeys)]
 } deriving (Show)
 
 emptyWindowEvents :: WindowEvents
-emptyWindowEvents = WindowEvents []
+emptyWindowEvents = WindowEvents Nothing []
 
 
 class Monad m => HasWindow m where
@@ -61,6 +62,11 @@ class Monad m => HasWindow m where
   default pollWindowEvents :: (t m' ~ m, HasWindow m', MonadTrans t)
     => m WindowEvents
   pollWindowEvents = lift pollWindowEvents
+
+  setCursorInputMode :: GLFW.CursorInputMode -> m ()
+  default setCursorInputMode :: (t m' ~ m, HasWindow m', MonadTrans t)
+    => GLFW.CursorInputMode -> m ()
+  setCursorInputMode = lift . setCursorInputMode
 
   windowShouldClose :: (HasWindow m) => m Bool
   default windowShouldClose :: (t m' ~ m, HasWindow m', MonadTrans t)
@@ -106,17 +112,20 @@ instance MonadIO m => HasWindow (GlfwWindowT m) where
       when (res < SUCCESS) . liftIO . throw . VulkanException $ res
       liftIO $ peek surfacePtr
 
-  getWindowBufferSize =
-    GlfwWindowT $ do
-      window <- asks glfwWindow
-      liftIO $ GLFW.getFramebufferSize window
+  getWindowBufferSize = GlfwWindowT $ do
+    window <- asks glfwWindow
+    liftIO $ GLFW.getFramebufferSize window
 
-  pollWindowEvents = do
+  pollWindowEvents = GlfwWindowT $ do
     liftIO GLFW.pollEvents
-    eventsRef <- GlfwWindowT $ asks glfwWindowEvents
+    eventsRef <- asks glfwWindowEvents
     events <- liftIO $ readIORef eventsRef
     liftIO $ writeIORef eventsRef emptyWindowEvents
     return events
+
+  setCursorInputMode mode = GlfwWindowT $ do
+    window <- asks glfwWindow
+    liftIO . GLFW.setCursorInputMode window $ mode
 
   windowShouldClose = GlfwWindowT $ do
     window <- asks glfwWindow
@@ -129,19 +138,27 @@ runGlfwWindowReaderT :: forall m a. (MonadAsyncException m)
   -> m a
 runGlfwWindowReaderT title m = evalContT $ do
   window <- ContT $ bracket createWindow' destroyWindow
-  windowEvents <- liftIO . newIORef $ WindowEvents []
+  windowEvents <- liftIO . newIORef $ emptyWindowEvents
 
   -- Bind event listeners
+  -- Keys
   liftIO . GLFW.setKeyCallback window . Just $
-    \_ key _ keyState modifierKeys -> do
+    \_ key _ keyState modifierKeys ->
       modifyIORef windowEvents $
         \es -> es {
             windowKeyEvents =
               (key, keyState, modifierKeys) : windowKeyEvents es
           }
+  -- Cursor
+  liftIO . GLFW.setCursorPosCallback window . Just $
+    \_ x y ->
+      modifyIORef windowEvents $
+        \es -> es {
+            windowCursorPosEvent = Just (realToFrac x, realToFrac y)
+          }
 
   let windowState = GlfwWindowState window windowEvents
-  ContT (\_ -> flip runReaderT windowState . unGlfwWindowT $ m)
+  ContT . const . flip runReaderT windowState . unGlfwWindowT $ m
  where
   createWindow' :: m Window
   createWindow' = liftIO $ do
