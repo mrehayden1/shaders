@@ -1,5 +1,5 @@
 module Graphics.Shaders.Internal.Pipeline (
-  Pipeline(..),
+  PipelineBuilder(..),
   CompiledPipeline,
 
   UniformBinding(..),
@@ -91,16 +91,16 @@ data CompiledPipeline e = CompiledPipeline {
   compiledPipelineUniformInput :: [(Int, BufferGetter e)]
 }
 
--- Pipeline Monad
-newtype Pipeline t e a = Pipeline {
+-- |A monad for defining graphics pipelines.
+newtype PipelineBuilder t e a = PipelineBuilder {
   unPipeline ::
     StateT
-    (PipelineS e)
+    (PipelineBuilderState e)
     IO
     a
 } deriving (Functor, Applicative, Monad, MonadIO)
 
-type PipelineS e = (
+type PipelineBuilderState e = (
     Int, -- Next unique name
     Int, -- Next uniform binding number
     -- Vertex binding mapped by unique name
@@ -132,9 +132,9 @@ data SamplerBinding e = SamplerBinding {
   samplerTextureGetter :: e -> Texture
 }
 
-tellVertexInput :: VertexBinding e -> Pipeline t e Int
+tellVertexInput :: VertexBinding e -> PipelineBuilder t e Int
 tellVertexInput i = do
-  (n', _, _, _, _) <- Pipeline . update $
+  (n', _, _, _, _) <- PipelineBuilder . update $
     \(n, ub, ins, ubs, sbs) -> (n + 1, ub, M.insert n i ins, ubs, sbs)
   return n'
 
@@ -162,7 +162,7 @@ toPrimitiveStream :: forall e t a b c. (BufferFormat a, BufferFormat b,
     VertexInput c)
   => (e -> PrimitiveArray t a b)
   -> (a -> b -> c)
-  -> Pipeline t e (PrimitiveStream t (VertexFormat c))
+  -> PipelineBuilder t e (PrimitiveStream t (VertexFormat c))
 toPrimitiveStream getPrimitiveArray f = do
   let (vB, vBindDescr) =
         makeVertexBinding @a vertexBufferBindingNumber
@@ -207,7 +207,7 @@ toPrimitiveStream getPrimitiveArray f = do
 
 rasterize :: forall a e t. FragmentInput a
   => PrimitiveStream t (GLPos, a)
-  -> Pipeline t e (FragmentStream (FragmentFormat a))
+  -> PipelineBuilder t e (FragmentStream (FragmentFormat a))
 rasterize (PrimitiveStream inName (glPos, vOut)) = do
   let ToFragment (Kleisli buildOutput) =
         toFragment :: ToFragment a (FragmentFormat a)
@@ -227,7 +227,7 @@ rasterize (PrimitiveStream inName (glPos, vOut)) = do
 compilePipeline :: forall e m t. (MonadAsyncException m, MonadLogger m,
     MonadResource m, HasVulkan m, HasVulkanDevice m, HasSwapchain m,
     BaseTopology t)
-  => Pipeline t e (FragmentStream (V4 (S F Float)))
+  => PipelineBuilder t e (FragmentStream (V4 (S F Float)))
   -> m (CompiledPipeline e)
 compilePipeline pipeline = do
   allocator <- getVulkanAllocator

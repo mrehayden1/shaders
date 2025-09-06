@@ -25,12 +25,12 @@ import Graphics.Shaders.Internal.Texture
 
 data Sampler = Sampler
 
-getSampler :: (e -> Texture) -> Pipeline t e (S x Sampler)
+getSampler :: (e -> Texture) -> PipelineBuilder t e (S x Sampler)
 getSampler getter = do
   -- Hash the getter StableName and look it up in the cache so we don't keep
   -- rebinding the uniform it's for.
   hash <- liftIO . fmap hashStableName . makeStableName $! getter
-  bindings <- Pipeline . gets $ \(_, _, _, _, sbs) -> sbs
+  bindings <- PipelineBuilder . gets $ \(_, _, _, _, sbs) -> sbs
   let hasBinding = hash `M.member` bindings
 
   -- Get the uniform binding location.
@@ -39,7 +39,7 @@ getSampler getter = do
             then return . samplerBindingNumber $ bindings M.! hash
             -- else use the next available one.
             else do
-              (_, bind, _, _, _) <- Pipeline . update $
+              (_, bind, _, _, _) <- PipelineBuilder . update $
                 \(n, un, ins, ubs, sbs) -> (n, un + 1, ins, ubs, sbs)
               return bind
 
@@ -57,7 +57,7 @@ getSampler getter = do
           .|. Vk.SHADER_STAGE_FRAGMENT_BIT
       }
 
-  unless hasBinding . Pipeline $ do
+  unless hasBinding . PipelineBuilder $ do
     modify $ \(n, un, ins, ubs, sbs) ->
       let sb = SamplerBinding {
         samplerBindingNumber = bind,

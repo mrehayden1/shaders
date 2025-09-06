@@ -47,12 +47,12 @@ type DeclM = ReaderT
 -- Gets the uniform from the Pipeline environment.
 getUniform :: forall t e a r x. UniformInput a
   => (e -> Buffer r (Uniform a))
-  -> Pipeline t e (UniformFormat a x)
+  -> PipelineBuilder t e (UniformFormat a x)
 getUniform getter = do
   -- Hash the getter StableName and look it up in the cache so we don't keep
   -- rebinding the uniform it's for.
   hash <- liftIO . fmap hashStableName . makeStableName $! getter
-  bindings <- Pipeline . gets $ \(_, _, _, ubs, _) -> ubs
+  bindings <- PipelineBuilder . gets $ \(_, _, _, ubs, _) -> ubs
   let hasBinding = hash `M.member` bindings
 
   -- Get the uniform binding location.
@@ -61,7 +61,7 @@ getUniform getter = do
             then return . uniformBindingNumber $ bindings M.! hash
             -- else use the next available one.
             else do
-              (_, bind, _, _, _) <- Pipeline . update $
+              (_, bind, _, _, _) <- PipelineBuilder . update $
                 \(n, un, ins, ubs, sbs) -> (n, un + 1, ins, ubs, sbs)
               return bind
 
@@ -87,7 +87,7 @@ getUniform getter = do
       }
 
   -- Create the uniform binding if it doesn't already have one.
-  unless hasBinding . Pipeline $ do
+  unless hasBinding . PipelineBuilder $ do
     modify $ \(n, un, ins, ubs, sbs) ->
       let ub = UniformBinding {
         uniformBindingNumber = bind,

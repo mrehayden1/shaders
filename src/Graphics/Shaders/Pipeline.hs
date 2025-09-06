@@ -3,7 +3,7 @@ module Graphics.Shaders.Pipeline (
   module Graphics.Shaders.PrimitiveArray,
   module Graphics.Shaders.PrimitiveStream,
 
-  Pipeline,
+  PipelineBuilder,
   CompiledPipeline,
 
   FragmentStream,
