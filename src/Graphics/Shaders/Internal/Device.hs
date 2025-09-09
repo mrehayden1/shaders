@@ -120,7 +120,7 @@ withRenderPass allocator device format = do
       Vk.zero {
         VkPass.finalLayout = Vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
         VkPass.format = format,
-        VkPass.initialLayout = Vk.IMAGE_LAYOUT_UNDEFINED,
+        VkPass.initialLayout = Vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
         VkPass.loadOp = VkPass.ATTACHMENT_LOAD_OP_LOAD,
         VkPass.samples = Vk.SAMPLE_COUNT_1_BIT,
         VkPass.stencilLoadOp = VkPass.ATTACHMENT_LOAD_OP_DONT_CARE,
