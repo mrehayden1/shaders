@@ -470,7 +470,8 @@ instance HasVulkanDevice m => HasVulkanDevice (Render m)
 instance HasSwapchain m => HasSwapchain (Render m)
 instance MonadLogger m => MonadLogger (Render m)
 
-
+-- TODO Make it so there's only one render per frame, since the queue
+-- submission here signals the fence that allows the swap.
 runRender :: (MonadIO m, HasVulkanDevice m, HasSwapchain m, MonadLogger m)
   => Render m ()
   -> m ()
@@ -483,10 +484,6 @@ runRender (Render m) = do
     Codensity $ VkCmd.useCommandBuffer commandBuffer Vk.zero . (&) ()
     m
 
-  -- TODO Make it so there's only one render per frame, since this submission
-  -- signals the semaphore that allows the swap.
-
-  -- Submit the queue.
   logTrace "Submitting queue."
 
   let submitInfos = fmap SomeStruct . V.singleton $ Vk.zero {

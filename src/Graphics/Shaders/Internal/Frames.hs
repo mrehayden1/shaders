@@ -59,9 +59,8 @@ createSyncObjects allocator Device{..} n = do
          VkSemaphore.destroySemaphore deviceHandle semaphore allocator
       )
     debug "Creating in flight fence."
-    let inFlightFenceCreateInfo = Vk.zero {
-            VkFence.flags = VkFence.FENCE_CREATE_SIGNALED_BIT
-          }
+    -- Unsignalled fence object by default.
+    let inFlightFenceCreateInfo = Vk.zero
     (_, inFlightFence) <- allocate
       (VkFence.createFence deviceHandle inFlightFenceCreateInfo allocator)
       (\fence -> VkFence.destroyFence deviceHandle fence allocator)
