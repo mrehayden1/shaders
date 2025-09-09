@@ -40,7 +40,6 @@ import Foreign.Ptr
 import Foreign.Storable
 import Linear
 import qualified Vulkan.Core10.Buffer as VkBuffer
-import qualified Vulkan.Core10.CommandBuffer as VkCmdBuffer
 import qualified Vulkan.Core10.CommandBufferBuilding as VkCmd
 import qualified Vulkan.Core10.CommandBufferBuilding as VkCopy (BufferCopy(..))
 import qualified Vulkan.Core10.Enums as Vk
@@ -48,12 +47,11 @@ import qualified Vulkan.Core10.FundamentalTypes as Vk
 import qualified Vulkan.Core10.Handles as Vk
 import qualified Vulkan.Core10.Memory as VkMemory
 import qualified Vulkan.Core10.MemoryManagement as VkMemRequirements
-import qualified Vulkan.Core10.Queue as VkQueue
-import Vulkan.CStruct.Extends
 import qualified Vulkan.Zero as Vk
 
 import Graphics.Shaders.Class
 import Graphics.Shaders.Logger.Class
+import Graphics.Shaders.Internal.Command
 import Graphics.Shaders.Internal.Memory
 
 -- BufferAccess - Buffer usage type.
@@ -234,46 +232,6 @@ createVkBuffer bufferSize bufferUsageFlags
   VkMemRequirements.bindBufferMemory device buffer memory 0
 
   return (buffer, bufferReleaseKey, memory, memoryReleaseKey)
-
-withOneTimeSubmitCommandBuffer :: (MonadIO m, MonadLogger m)
-  => Vk.Device
-  -> Vk.Queue
-  -> Vk.CommandPool
-  -> (Vk.CommandBuffer -> m ())
-  -> m ()
-withOneTimeSubmitCommandBuffer deviceHandle queueHandle commandPool c = do
-  let commandBufferCreateInfo = Vk.zero {
-        VkCmdBuffer.commandBufferCount = 1,
-        VkCmdBuffer.commandPool = commandPool,
-        VkCmdBuffer.level = VkCmdBuffer.COMMAND_BUFFER_LEVEL_PRIMARY
-      }
-
-  debug "Allocating temporary command buffer."
-  cmdBuffers <- VkCmdBuffer.allocateCommandBuffers deviceHandle
-                  commandBufferCreateInfo
-  let cmdBuffer = V.head cmdBuffers
-
-  let beginInfo = Vk.zero {
-        VkCmdBuffer.flags =
-          VkCmdBuffer.COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
-      }
-  VkCmdBuffer.beginCommandBuffer cmdBuffer beginInfo
-
-  c cmdBuffer
-
-  VkCmdBuffer.endCommandBuffer cmdBuffer
-
-  let submitInfo = SomeStruct $ Vk.zero {
-        VkQueue.commandBuffers = fmap Vk.commandBufferHandle . V.singleton
-          $ cmdBuffer
-      }
-
-  VkQueue.queueSubmit queueHandle (V.singleton submitInfo) Vk.zero
-  VkQueue.queueWaitIdle queueHandle
-
-  debug "Destroying temporary command buffer."
-  VkCmdBuffer.freeCommandBuffers deviceHandle commandPool cmdBuffers
-
 
 destroyBuffer :: MonadIO m => Buffer t a -> m ()
 destroyBuffer b = case b of

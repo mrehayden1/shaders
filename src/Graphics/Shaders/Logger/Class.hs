@@ -27,18 +27,23 @@ class Monad m => MonadLogger m where
 data LogLevel = LogTrace | LogDebug | LogInfo | LogWarn | LogError | LogNone
  deriving (Eq, Ord, Show)
 
+-- Extra information
 logTrace :: MonadLogger m => String -> m ()
 logTrace = loggerLog LogTrace
 
+-- Debugging
 debug :: MonadLogger m => String -> m ()
 debug = loggerLog LogDebug
 
+-- Information
 info :: MonadLogger m => String -> m ()
 info = loggerLog LogInfo
 
+-- Recoverable errors.
 warn :: MonadLogger m => String -> m ()
 warn = loggerLog LogWarn
 
+-- Unrecoverable errors.
 err :: MonadLogger m => String -> m ()
 err = loggerLog LogError
 

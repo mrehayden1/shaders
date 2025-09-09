@@ -9,7 +9,12 @@ module Graphics.Shaders.Pipeline (
   FragmentStream,
 
   compilePipeline,
-  runPipeline,
+
+  Render,
+  runRender,
+
+  drawWindow,
+  clearWindow,
 
   toPrimitiveStream,
   rasterize

@@ -29,6 +29,7 @@ import qualified Vulkan.Extensions.VK_KHR_surface as VkSurface
 import Witherable
 
 import Control.Monad.Trans.Maybe.Extra
+import Data.Bits.Extra
 import Graphics.Shaders.Internal.Window
 import Graphics.Shaders.Logger.Class
 
@@ -52,6 +53,34 @@ data SwapChainSettings = SwapChainSettings {
 
 -- Returns a list of physical devices that have support for everything we need
 -- sorted by a suitability score.
+--
+-- Support statistics quote below are per vulkan.gpuinfo.org
+--
+-- Requirements:
+--
+--   Surface format:
+--
+--   We rely on the following surface format, which is 99% supported on
+--   Windows.
+--
+--     SurfaceFormatKHR {
+--       format=FORMAT_B8G8R8A8_SRGB,
+--       colorSpace=COLOR_SPACE_SRGB_NONLINEAR_KHR
+--     }
+--
+--
+--   Present mode:
+--
+--   Require PRESENT_MODE_IMMEDIATE_KHR (at least for now but we could fall
+--   back to PRESENT_MODE_FIFO_KHR, 100% Windows support if it's not
+--   available).
+--
+--
+--   Depth format:
+--
+--   Require D32_SFLOAT, which as 100% Windows Support for depth stencil
+--   attachments and optimal tiling.
+--
 getSuitableDevices :: (MonadIO m, MonadLogger m, HasWindow m)
   => Vk.Instance
   -> VkSurface.SurfaceKHR
@@ -79,7 +108,7 @@ getSuitableDevices vkInstance surface requiredExtensions = do
     unless (null unsupportedExtensions) $ do
       let errStr = printf "Missing required extensions: %s." . intercalate ", "
             . fmap UTF8.toString $ unsupportedExtensions
-      debug errStr
+      err errStr
       fail errStr
     debug "Found required extensions."
 
@@ -89,14 +118,19 @@ getSuitableDevices vkInstance surface requiredExtensions = do
     queueFamilyProperties <-
       VkDevice.getPhysicalDeviceQueueFamilyProperties device
     queueFamilyIndex <-
-      findSuitableQueueFamilyIndex surface device queueFamilyProperties
+      tryFindSuitableQueueFamilyIndex surface device queueFamilyProperties
     debug . printf "Chosen queue family %d." $ queueFamilyIndex
 
-    -- Get the surface capabilities, formats, present modes and memory
-    -- properties.
-    swapChainSupport <- getSwapChainSupport device surface
+    -- Try to get the required surface capabilities, formats, present modes.
+    swapChainSupport <- tryGetSwapChainSupport device surface
     logTrace "Dumping device swap chain support."
     logTrace . show $ swapChainSupport
+
+    -- Try to get the required depth format.
+    depthFormat <- tryGetDepthFormat device
+    debug . printf "Chosen depth format %s." . show $ depthFormat
+
+    -- Get the device memory properties
     memoryProperties <- VkDevice.getPhysicalDeviceMemoryProperties device
     logTrace "Dumping device memory properties."
     logTrace . show $ memoryProperties
@@ -126,22 +160,11 @@ scoreSuitability device =
 
 -- Try to get swap chain info, failing when the surface support doesn't meet
 -- requirements.
---
--- Notes:
---
---   Surface format we require just one true colour, SRGB format:
---   {format=FORMAT_B8G8R8A8_SRGB, colorSpace=COLOR_SPACE_SRGB_NONLINEAR_KHR}
---   which is 99.9% supported on Windows.
---
---   Present mode: PRESENT_MODE_IMMEDIATE_KHR is our choice for development
---   but we could fall back to PRESENT_MODE_FIFO_KHR (100% Windows support) if
---   its not available.
---
-getSwapChainSupport :: (MonadIO m, MonadLogger m, HasWindow m)
+tryGetSwapChainSupport :: (MonadIO m, MonadLogger m, HasWindow m)
   => Vk.PhysicalDevice
   -> VkSurface.SurfaceKHR
   -> MaybeT m SwapChainSettings
-getSwapChainSupport device surface = do
+tryGetSwapChainSupport device surface = do
   -- Note that we've already checked if there is a queue family that supports
   -- the VK_KHR_surface extension on this device as required by
   -- `vkGetPhysicalDeviceSurfaceCapabilitiesKHR`.
@@ -205,7 +228,7 @@ getSwapChainSupport device surface = do
   unless hasSurfaceFormat $ do
     let errStr = printf "Missing required surface format %s" . show
                    $ surfaceFormat
-    debug errStr
+    err errStr
     fail errStr
   debug . printf "Chosen surface format %s." . show $ surfaceFormat
 
@@ -221,7 +244,7 @@ getSwapChainSupport device surface = do
       hasPresentMode = presentMode `elem` presentModes
   unless hasPresentMode $ do
     let errStr = "Missing required present mode PRESENT_MODE_IMMEDIATE_KHR."
-    debug errStr
+    err errStr
     fail errStr
   debug . printf "Chosen present mode %s." . show $ presentMode
 
@@ -233,19 +256,38 @@ getSwapChainSupport device surface = do
       swapSettingsTransform = transform
     }
 
+tryGetDepthFormat :: (MonadIO m, MonadLogger m)
+  => Vk.PhysicalDevice
+  -> MaybeT m Vk.Format
+tryGetDepthFormat device = do
+  debug "Getting required depth format."
+  let requiredDepthFormat = Vk.FORMAT_D32_SFLOAT
+  formatProperties <- VkDevice.getPhysicalDeviceFormatProperties device
+    requiredDepthFormat
+  let hasDepthFormat =
+        (.?. VkDevice.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)
+          . VkDevice.optimalTilingFeatures
+          $ formatProperties
+  unless hasDepthFormat $ do
+    let errStr = printf "Missing required depth format %s" . show
+          $ requiredDepthFormat
+    err errStr
+    fail errStr
+  return requiredDepthFormat
+
 -- Checks that a device has at least one queue family that can do everything
 -- we want and try to pick it. This is pretty much always going to be possible.
-findSuitableQueueFamilyIndex :: forall m. (MonadIO m, MonadLogger m)
+tryFindSuitableQueueFamilyIndex :: forall m. (MonadIO m, MonadLogger m)
   => VkSurface.SurfaceKHR
   -> Vk.PhysicalDevice
   -> Vector VkDevice.QueueFamilyProperties
   -> MaybeT m Word32
-findSuitableQueueFamilyIndex surface device queueFamilyProperties = do
+tryFindSuitableQueueFamilyIndex surface device queueFamilyProperties = do
   queueFamilies <- filterA (uncurry isSuitable) . zip [0..] . V.toList
                      $ queueFamilyProperties
   when (null queueFamilies) $ do
     let errStr = "No compatible queue family."
-    debug errStr
+    err errStr
     fail errStr
   hoistMaybe . listToMaybe . fmap fst $ queueFamilies
  where

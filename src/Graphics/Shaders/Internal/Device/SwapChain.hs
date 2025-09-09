@@ -7,6 +7,7 @@ module Graphics.Shaders.Internal.Device.SwapChain (
 import Control.Monad
 import Control.Monad.Exception
 import Control.Monad.Trans.Resource
+import Data.Bits
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Vulkan.Core10.AllocationCallbacks
@@ -25,11 +26,13 @@ import Graphics.Shaders.Logger.Class
 -- Information about the swap chain.
 data SwapChain = SwapChain {
   swapChainHandle :: VkSwapChain.SwapchainKHR,
-  -- Swap chain image size and format
+  -- Image size and format
   swapChainExtent :: VkExtent2D.Extent2D,
   swapChainFormat :: VkSurface.SurfaceFormatKHR,
-  -- Swap chain image framebuffers
-  swapChainFramebuffers :: Vector Vk.Framebuffer
+  -- Image framebuffers
+  swapChainFramebuffers :: Vector Vk.Framebuffer,
+  -- Images
+  swapChainImages :: Vector Image
 } deriving (Show)
 
 withSwapChain :: (MonadAsyncException m, MonadLogger m, MonadResource m)
@@ -52,7 +55,8 @@ withSwapChain allocator surface device renderPass SwapChainSettings{..} = do
       VkSurface.colorSpace swapSettingsSurfaceFormat,
     VkSwapChain.imageExtent = swapSettingsExtent,
     VkSwapChain.imageArrayLayers = 1,
-    VkSwapChain.imageUsage = Vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+    VkSwapChain.imageUsage = Vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+      .|. Vk.IMAGE_USAGE_TRANSFER_DST_BIT,
     VkSwapChain.imageSharingMode = Vk.SHARING_MODE_EXCLUSIVE,
     VkSwapChain.preTransform = swapSettingsTransform,
     VkSwapChain.compositeAlpha = VkSwapChain.COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
@@ -66,11 +70,9 @@ withSwapChain allocator surface device renderPass SwapChainSettings{..} = do
       VkSwapChain.destroySwapchainKHR device swapChain allocator
     )
 
-  -- Create swap chain images and image views.
+  -- Get swap chain images and create image views.
   debug "Retrieving swap chain images."
-  (result, swapImages) <- VkSwapChain.getSwapchainImagesKHR
-                            device
-                            swapChain
+  (result, swapImages) <- VkSwapChain.getSwapchainImagesKHR device swapChain
   when (result == Vk.INCOMPLETE) $
     warn "Vulkan API returned incomplete swap chain images list."
 
@@ -98,7 +100,8 @@ withSwapChain allocator surface device renderPass SwapChainSettings{..} = do
     swapChainHandle = swapChain,
     swapChainExtent = swapSettingsExtent,
     swapChainFormat = swapSettingsSurfaceFormat,
-    swapChainFramebuffers = framebuffers
+    swapChainFramebuffers = framebuffers,
+    swapChainImages = swapImages
   }
 
 withFramebuffers :: (MonadLogger m, MonadResource m)

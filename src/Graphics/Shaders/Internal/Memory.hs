@@ -48,7 +48,7 @@ allocateMemory memoryRequirements memoryPropertyFlags = do
     (\m -> VkMemory.freeMemory device m allocator)
  where
   getMemoryTypeIndexIfCompatible i t =
-    if VkDevice.propertyFlags t .&&. memoryPropertyFlags
+    if VkDevice.propertyFlags t .?. memoryPropertyFlags
          && testBit (VkMemRequirements.memoryTypeBits memoryRequirements) i
       then Just i
       else Nothing

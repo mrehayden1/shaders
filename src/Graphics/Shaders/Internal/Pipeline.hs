@@ -10,7 +10,12 @@ module Graphics.Shaders.Internal.Pipeline (
   FragmentStream,
 
   compilePipeline,
-  runPipeline,
+
+  Render,
+  runRender,
+
+  clearWindow,
+  drawWindow,
 
   toPrimitiveStream,
   rasterize
@@ -58,6 +63,8 @@ import qualified Vulkan.Core10.DescriptorSet as VkDSWrite (
 import qualified Vulkan.Core10.Device as VkDevice
 import qualified Vulkan.Core10.Enums as Vk
 import qualified Vulkan.Core10.Handles as Vk
+import qualified Vulkan.Core10.ImageView as VkImageView
+import Vulkan.Core10.OtherTypes as VkBarrier (ImageMemoryBarrier(..))
 import qualified Vulkan.Core10.Pipeline as VkBinding (
   VertexInputBindingDescription(..))
 import qualified Vulkan.Core10.Pipeline as VkPipeline hiding (
@@ -81,6 +88,7 @@ import Graphics.Shaders.Internal.PrimitiveArray
 import Graphics.Shaders.Internal.PrimitiveStream
 import Graphics.Shaders.Internal.Texture
 import Graphics.Shaders.Logger.Class
+import Graphics.Shaders.Orphans ()
 
 data CompiledPipeline e = CompiledPipeline {
   compiledPipeline :: VkPipeline.Pipeline,
@@ -452,17 +460,114 @@ createShader device stage code = do
 
     return compiledCode
 
-runPipeline :: forall m e. (MonadIO m, MonadLogger m, HasVulkanDevice m,
+-- A monad that brackets commands to be within the current frame's command
+-- buffer.
+newtype Render m a = Render { unRender :: Codensity m a }
+  deriving (Functor, Applicative, Monad, MonadIO, MonadTrans)
+
+instance HasVulkan m => HasVulkan (Render m)
+instance HasVulkanDevice m => HasVulkanDevice (Render m)
+instance HasSwapchain m => HasSwapchain (Render m)
+instance MonadLogger m => MonadLogger (Render m)
+
+
+runRender :: (MonadIO m, HasVulkanDevice m, HasSwapchain m, MonadLogger m)
+  => Render m ()
+  -> m ()
+runRender (Render m) = do
+  (_, Frame{..}) <- getCurrentFrame
+  let SyncObjects{..} = frameSyncObjects
+      commandBuffer = frameCommandBuffer
+
+  flip runCodensity return $ do
+    Codensity $ VkCmd.useCommandBuffer commandBuffer Vk.zero . (&) ()
+    m
+
+  -- TODO Make it so there's only one render per frame, since this submission
+  -- signals the semaphore that allows the swap.
+
+  -- Submit the queue.
+  logTrace "Submitting queue."
+
+  let submitInfos = fmap SomeStruct . V.singleton $ Vk.zero {
+    VkQueue.commandBuffers =
+      fmap VkCmd.commandBufferHandle . V.fromList $ [ commandBuffer ],
+    VkQueue.signalSemaphores = V.singleton syncRenderFinishedSemaphore
+  }
+  queue <- getDeviceQueue
+  VkQueue.queueSubmit queue submitInfos syncInFlightFence
+
+clearWindow :: (MonadIO m, HasSwapchain m) => Render m ()
+clearWindow = do
+  (_, Frame{..}) <- getCurrentFrame
+  (image, _) <- getCurrentSwapImage
+  let commandBuffer = frameCommandBuffer
+
+  let presentToClearMemoryBarrier = Vk.zero {
+    VkBarrier.dstAccessMask = Vk.ACCESS_TRANSFER_WRITE_BIT,
+    VkBarrier.dstQueueFamilyIndex = Vk.QUEUE_FAMILY_IGNORED,
+    VkBarrier.image = image,
+    VkBarrier.newLayout = Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+    VkBarrier.oldLayout = Vk.IMAGE_LAYOUT_UNDEFINED,
+    VkBarrier.srcAccessMask = Vk.ACCESS_MEMORY_READ_BIT,
+    VkBarrier.srcQueueFamilyIndex = Vk.QUEUE_FAMILY_IGNORED,
+    VkBarrier.subresourceRange = Vk.zero {
+      VkImageView.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
+      VkImageView.layerCount = 1,
+      VkImageView.levelCount = 1
+    }
+  }
+
+  let clearToPresentMemoryBarrier = Vk.zero {
+    VkBarrier.dstAccessMask = Vk.ACCESS_MEMORY_READ_BIT,
+    VkBarrier.dstQueueFamilyIndex = Vk.QUEUE_FAMILY_IGNORED,
+    VkBarrier.image = image,
+    VkBarrier.newLayout = Vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
+    VkBarrier.oldLayout = Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+    VkBarrier.srcAccessMask = Vk.ACCESS_TRANSFER_WRITE_BIT,
+    VkBarrier.srcQueueFamilyIndex = Vk.QUEUE_FAMILY_IGNORED,
+    VkBarrier.subresourceRange = Vk.zero {
+      VkImageView.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
+      VkImageView.layerCount = 1,
+      VkImageView.levelCount = 1
+    }
+  }
+
+  VkCmd.cmdPipelineBarrier commandBuffer Vk.PIPELINE_STAGE_TRANSFER_BIT
+        Vk.PIPELINE_STAGE_TRANSFER_BIT Vk.zero mempty mempty
+    . V.singleton . SomeStruct $ presentToClearMemoryBarrier
+
+  let clearColor = VkCmd.Int32 0 0 0 0
+      subresourceRange = VkImageView.ImageSubresourceRange {
+          aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
+          baseMipLevel = 0,
+          levelCount = 1,
+          baseArrayLayer = 0,
+          layerCount = 1
+        }
+  VkCmd.cmdClearColorImage commandBuffer image
+        Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL clearColor
+    . V.singleton $ subresourceRange
+
+  VkCmd.cmdPipelineBarrier commandBuffer Vk.PIPELINE_STAGE_TRANSFER_BIT
+        Vk.PIPELINE_STAGE_ALL_GRAPHICS_BIT Vk.zero mempty mempty
+    . V.singleton . SomeStruct $ clearToPresentMemoryBarrier
+
+
+drawWindow :: forall m e. (MonadIO m, MonadLogger m, HasVulkanDevice m,
     HasSwapchain m)
   => e
   -> CompiledPipeline e
   -> m ()
-runPipeline e CompiledPipeline{..} = do
+drawWindow e CompiledPipeline{..} = do
   device <- getDevice
-  (frameNumber, Frame{..}, framebuffer) <- getCurrentFrame
+  (frameNumber, Frame{..}) <- getCurrentFrame
+  (_, framebuffer) <- getCurrentSwapImage
 
   -- Update the current frame's descriptor set to point to the correct uniform
   -- buffers and textures/samplers.
+  logTrace "Updating descriptors."
+
   let descriptorSet = compiledPipelineDescriptorSets V.! frameNumber
       uniformDescriptorWrites = flip fmap compiledPipelineUniformInput $
         \(bind, getter) ->
@@ -496,37 +601,13 @@ runPipeline e CompiledPipeline{..} = do
         uniformDescriptorWrites <> samplerDescriptorWrites
   VkDescr.updateDescriptorSets device descriptorWrites V.empty
 
-  -- Record and submit the command buffers.
-  logTrace "Submitting command buffers"
+  -- Record transfer and draw commands.
+  let commandBuffer = frameCommandBuffer
 
-  let SyncObjects{..} = frameSyncObjects
-      commandBuffer = frameCommandBuffer
-
-  recordCommands commandBuffer framebuffer compiledPipeline descriptorSet
-    compiledPipelinePrimitiveArray
-
-  let submitInfos = fmap SomeStruct . V.singleton $ Vk.zero {
-    VkQueue.commandBuffers =
-      fmap VkCmd.commandBufferHandle . V.fromList $ [ commandBuffer ],
-    VkQueue.signalSemaphores = V.singleton syncRenderFinishedSemaphore
-  }
-  queue <- getDeviceQueue
-  VkQueue.queueSubmit queue submitInfos syncInFlightFence
-
-  return ()
- where
-  recordCommands :: VkCmd.CommandBuffer
-    -> Vk.Framebuffer
-    -> VkPipeline.Pipeline
-    -> Vk.DescriptorSet
-    -> PrimitiveArrayGetter e
-    -> m ()
-  recordCommands commandBuffer framebuffer pipelineHandle descriptorSet
-    primitiveArrayGetter = flip runCodensity return $ do
+  flip runCodensity return $ do
     -- Use Codensity to bracket command buffer recording and render pass.
-    extent <- lift getSwapChainExtent
-    renderPass <- lift getRenderPass
-    Codensity $ VkCmd.useCommandBuffer commandBuffer Vk.zero . (&) ()
+    extent <- getSwapChainExtent
+    renderPass <- getRenderPass
 
     -- Transfer data in staging buffers to their writable buffer.
     forM_ compiledPipelineUniformInput $
@@ -535,36 +616,31 @@ runPipeline e CompiledPipeline{..} = do
           (\case
              BufferReadOnly{}   -> return ()
              BufferWritable{..} -> do
-               VkCmd.cmdCopyBuffer
-                 commandBuffer
-                 wBufferStagingBufferHandle
-                 wBufferHandle
-                 (V.singleton $ VkCmd.BufferCopy
-                    Vk.zero
-                    Vk.zero
-                    (fromIntegral $ wBufferStride * wBufferNumElems)
-                 )
+               let copy = V.singleton $ VkCmd.BufferCopy Vk.zero Vk.zero
+                     . fromIntegral $ wBufferStride * wBufferNumElems
+               VkCmd.cmdCopyBuffer commandBuffer wBufferStagingBufferHandle
+                 wBufferHandle copy
           ) :: Buffer r a -> Codensity m ()
         )
 
-    -- TODO Barrier
-    --VkCmd.cmdPipelineBarrier
+    -- Synchronise buffer copies with writes
+    VkCmd.cmdPipelineBarrier commandBuffer Vk.PIPELINE_STAGE_TRANSFER_BIT
+      Vk.PIPELINE_STAGE_ALL_GRAPHICS_BIT Vk.zero mempty mempty mempty
 
     let renderPassBeginInfo = Vk.zero {
-      VkCmd.clearValues = V.fromList [
-        VkCmd.Color (VkCmd.Float32 0 0 0 1)
-      ],
       VkCmd.framebuffer = framebuffer,
       VkCmd.renderArea = Vk.zero {
         VkRect2D.extent = extent
       },
       VkCmd.renderPass = renderPass
     }
+
     Codensity $
       VkCmd.cmdUseRenderPass commandBuffer renderPassBeginInfo
         VkCmd.SUBPASS_CONTENTS_INLINE . (&) ()
-    lift $ VkCmd.cmdBindPipeline commandBuffer
-      Vk.PIPELINE_BIND_POINT_GRAPHICS pipelineHandle
+
+    VkCmd.cmdBindPipeline commandBuffer
+      Vk.PIPELINE_BIND_POINT_GRAPHICS compiledPipeline
 
     let viewport = Vk.zero {
       VkPipeline.height = fromIntegral . VkExtent2D.height $ extent,
@@ -578,6 +654,7 @@ runPipeline e CompiledPipeline{..} = do
     }
     VkCmd.cmdSetScissor commandBuffer 0 . V.singleton $ scissor
 
+    logTrace "Binding descriptors."
     VkCmd.cmdBindDescriptorSets commandBuffer
       Vk.PIPELINE_BIND_POINT_GRAPHICS
       compiledPipelineLayout
@@ -586,7 +663,8 @@ runPipeline e CompiledPipeline{..} = do
       V.empty
 
     -- Begin draw calls
-    withPrimitiveArray primitiveArrayGetter e $ \pa ->
+    logTrace "Recording draw commands."
+    withPrimitiveArray compiledPipelinePrimitiveArray e $ \pa ->
       forM_ (unPrimitiveArray pa) $ \PrimitiveArrayDrawCall{..} -> do
 
         let vertexBuffer = primitiveArrayVertices
@@ -615,3 +693,5 @@ runPipeline e CompiledPipeline{..} = do
           Unindexed numVertices ->
             VkCmd.cmdDraw commandBuffer (fromIntegral numVertices) numInstances
               (fromIntegral vertexStart) instanceStart
+
+  return ()

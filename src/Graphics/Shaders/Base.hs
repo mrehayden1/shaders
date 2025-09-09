@@ -72,13 +72,17 @@ instance Monad m => HasVulkanDevice (ShadersT m) where
 
 instance (MonadIO m, MonadLogger m) => HasSwapchain (ShadersT m) where
   getCurrentFrame = do
-    SwapChain{..} <- ShadersT . asks $ deviceSwapChain . graphicsDevice
     frames <- ShadersT $ asks graphicsFrames
     frameNumber <- ShadersT $ gets drawStateFrameIndex
-    swapChainImageIndex <- ShadersT $ gets drawStateSwapChainImageIndex
-    let framebuffer =
-          swapChainFramebuffers V.! fromIntegral swapChainImageIndex
-    return (frameNumber, frames V.! frameNumber, framebuffer)
+    return (frameNumber, frames V.! frameNumber)
+  getCurrentSwapImage = do
+    SwapChain{..} <- ShadersT . asks $ deviceSwapChain . graphicsDevice
+    swapChainImageIndex <- ShadersT . gets
+      $ fromIntegral . drawStateSwapChainImageIndex
+    let image = swapChainImages V.! swapChainImageIndex
+        framebuffer =
+          swapChainFramebuffers V.! swapChainImageIndex
+    return (image, framebuffer)
   getNumFrames = ShadersT . asks $ V.length . graphicsFrames
   getRenderPass = ShadersT . asks $ deviceRenderPass . graphicsDevice
   getSwapChain =
@@ -91,7 +95,7 @@ instance (MonadIO m, MonadLogger m) => HasSwapchain (ShadersT m) where
     swapChain <- getSwapChain
     numFrames <- getNumFrames
 
-    (_, Frame{..}, _) <- getCurrentFrame
+    (_, Frame{..}) <- getCurrentFrame
     let SyncObjects{..} = frameSyncObjects
 
     currentImageIndex <- ShadersT $ gets drawStateSwapChainImageIndex

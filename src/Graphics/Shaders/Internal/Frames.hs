@@ -23,6 +23,8 @@ framesInFlight :: Int
 framesInFlight = 2
 
 
+-- A "frame" is the synchronisation scope within which commands are submitted
+-- to the pipeline to render the next available image in the swapchain.
 data Frame = Frame {
   frameCommandBuffer :: Vk.CommandBuffer,
   frameSyncObjects :: SyncObjects

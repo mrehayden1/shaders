@@ -36,6 +36,7 @@ library
       Graphics.Shaders.Expr
       Graphics.Shaders.FragmentStream
       Graphics.Shaders.Internal.Buffer
+      Graphics.Shaders.Internal.Command
       Graphics.Shaders.Internal.DeclM
       Graphics.Shaders.Internal.Device
       Graphics.Shaders.Internal.Device.Physical
@@ -43,6 +44,7 @@ library
       Graphics.Shaders.Internal.Expr
       Graphics.Shaders.Internal.FragmentStream
       Graphics.Shaders.Internal.Frames
+      Graphics.Shaders.Internal.Image
       Graphics.Shaders.Internal.Instance
       Graphics.Shaders.Internal.Memory
       Graphics.Shaders.Internal.Pipeline

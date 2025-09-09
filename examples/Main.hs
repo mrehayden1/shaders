@@ -149,7 +149,10 @@ app = do
           ]
     writeBuffer matrixBuffer matrixData
 
-    runPipeline shaderEnv pipeline
+    runRender $ do
+      clearWindow
+      drawWindow shaderEnv pipeline
+
     swap
 
     logTrace "Polling window events"
