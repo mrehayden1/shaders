@@ -29,6 +29,7 @@ import Vulkan.Core10.Image as VkImage
 import Vulkan.Core10.ImageView as VkImageView
 import qualified Vulkan.Core10.Pass as VkFramebuffer hiding (
   RenderPassCreateInfo(..))
+import Vulkan.Core10.MemoryManagement as VkMemory
 import Vulkan.Extensions.VK_KHR_surface as VkSurface
 import Vulkan.Extensions.VK_KHR_swapchain as VkSwapchain
 import Vulkan.Zero as Vk
@@ -37,6 +38,7 @@ import Graphics.Shaders.Internal.Device
 import Graphics.Shaders.Internal.Device.Physical
 import Graphics.Shaders.Internal.Instance
 import Graphics.Shaders.Internal.Frames
+import Graphics.Shaders.Internal.Memory
 import Graphics.Shaders.Logger.Class
 
 
@@ -230,14 +232,16 @@ createSwapchain surface = do
       VkSwapchain.destroySwapchainKHR device swapchain allocator
     )
 
+  -- TODO Transition surface and depth images after creation.
+
   -- Get swap chain images and create image views.
   debug "Retrieving swap chain images."
   (result, swapImages) <- VkSwapchain.getSwapchainImagesKHR device swapchain
   when (result == Vk.INCOMPLETE) $
     warn "Vulkan API returned incomplete swap chain images list."
 
-  debug "Creating swap chain image views."
-  (_, swapImageViews) <- allocate
+  debug "Creating swap chain colour image views."
+  colourImageViews <- snd <$> allocate
     (forM swapImages $ \image -> do
       let imageViewCreateInfo = Vk.zero {
         VkImageView.format = swapchainImageFormat,
@@ -253,10 +257,29 @@ createSwapchain surface = do
     )
     (mapM_ $ \i -> VkImageView.destroyImageView device i allocator)
 
-  framebuffers <- createFramebuffers swapImageViews swapSettingsExtent
-
+  -- Create depth images.
   depthImages <- V.replicateM (V.length swapImages) $
     createDepthImage swapSettingsExtent
+
+  debug "Creating swap chain depth image views."
+  depthImageViews <- snd <$> allocate
+    (forM depthImages $ \image -> do
+      let imageViewCreateInfo = Vk.zero {
+        VkImageView.format = deviceDepthImageFormat,
+        VkImageView.image = image,
+        VkImageView.subresourceRange = Vk.zero {
+          VkImageView.aspectMask = Vk.IMAGE_ASPECT_DEPTH_BIT,
+          VkImageView.layerCount = 1,
+          VkImageView.levelCount = 1
+        },
+        VkImageView.viewType = VkImageView.IMAGE_VIEW_TYPE_2D
+      }
+      VkImageView.createImageView device imageViewCreateInfo allocator
+    )
+    (mapM_ $ \i -> VkImageView.destroyImageView device i allocator)
+
+  let imageViews = V.zip colourImageViews depthImageViews
+  framebuffers <- createFramebuffers imageViews swapSettingsExtent
 
   return $ Swapchain {
     swapchainHandle = swapchain,
@@ -266,7 +289,8 @@ createSwapchain surface = do
     swapchainImages = V.zip swapImages depthImages
   }
 
-createDepthImage :: (MonadResource m, HasVulkan m, HasVulkanDevice m)
+createDepthImage :: (MonadAsyncException m, MonadResource m, MonadLogger m,
+       HasVulkan m, HasVulkanDevice m)
   => Extent2D
   -> m Vk.Image
 createDepthImage imageExtent = do
@@ -287,26 +311,27 @@ createDepthImage imageExtent = do
     VkImage.samples = Vk.SAMPLE_COUNT_1_BIT,
     VkImage.sharingMode = Vk.SHARING_MODE_EXCLUSIVE,
     VkImage.tiling = Vk.IMAGE_TILING_OPTIMAL,
-    VkImage.usage = Vk.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
+    VkImage.usage = Vk.IMAGE_USAGE_TRANSFER_DST_BIT
+      .|. Vk.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
   }
 
-  snd <$> allocate
+  image <- snd <$> allocate
     (VkImage.createImage device imageInfo allocator)
     (\image -> VkImage.destroyImage device image allocator)
 
-{-
-  memoryRequirements <-
-    VkMemory.getImageMemoryRequirements device image
+  memoryRequirements <- VkMemory.getImageMemoryRequirements device image
 
-  memory <- snd <$> allocateMemory memoryRequirements
-    memoryPropertyFlags
+  let memoryPropertyFlags = Vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+  memory <- snd <$> allocateMemory memoryRequirements memoryPropertyFlags
 
   VkMemory.bindImageMemory device image memory 0
--}
+
+  return image
+
 
 createFramebuffers :: (MonadLogger m, MonadResource m, HasVulkan m,
        HasVulkanDevice m)
-  => Vector Vk.ImageView
+  => Vector (Vk.ImageView, Vk.ImageView)
   -> Extent2D
   -> m (Vector Vk.Framebuffer)
 createFramebuffers imageViews imageExtent = do
@@ -316,9 +341,10 @@ createFramebuffers imageViews imageExtent = do
 
   debug "Creating framebuffers."
   snd <$> allocate
-    (forM imageViews $ \imageView -> do
+    (forM imageViews $ \(colorImageView, depthImageView) -> do
         let framebufferCreateInfo = Vk.zero {
-          VkFramebuffer.attachments = V.singleton imageView,
+          VkFramebuffer.attachments = V.fromList
+            [ colorImageView, depthImageView ],
           VkFramebuffer.height = VkExtent2D.height imageExtent,
           VkFramebuffer.layers = 1,
           VkFramebuffer.renderPass = renderPass,

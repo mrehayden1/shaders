@@ -153,9 +153,9 @@ createDevice surface = do
   commandPool <- createCommandPool allocator vkDevice
     physicalDeviceQueueFamilyIndex
 
-  let swapSettings@SwapchainSettings{..} = physicalDeviceSwapchainSettings
-      surfaceFormat = VkSurface.format swapSettingsSurfaceFormat
-  renderPass <- createRenderPass allocator vkDevice surfaceFormat
+  let swapSettings = physicalDeviceSwapchainSettings
+
+  renderPass <- createRenderPass allocator vkDevice swapSettings
 
   let device = Device {
     deviceCommandPool = commandPool,
@@ -171,16 +171,29 @@ createDevice surface = do
 createRenderPass :: (MonadLogger m, MonadResource m)
   => Maybe AllocationCallbacks
   -> Vk.Device
-  -> Vk.Format
+  -> SwapchainSettings
   -> m Vk.RenderPass
-createRenderPass allocator device format = do
+createRenderPass allocator device SwapchainSettings{..} = do
+  let surfaceFormat = VkSurface.format swapSettingsSurfaceFormat
+
   debug "Creating render pass."
   let passCreateInfo = Vk.zero {
     VkPass.attachments = V.fromList [
       Vk.zero {
         VkPass.finalLayout = Vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
-        VkPass.format = format,
+        VkPass.format = surfaceFormat,
         VkPass.initialLayout = Vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        VkPass.loadOp = VkPass.ATTACHMENT_LOAD_OP_LOAD,
+        VkPass.samples = Vk.SAMPLE_COUNT_1_BIT,
+        VkPass.stencilLoadOp = VkPass.ATTACHMENT_LOAD_OP_DONT_CARE,
+        VkPass.stencilStoreOp = VkPass.ATTACHMENT_STORE_OP_DONT_CARE,
+        VkPass.storeOp = VkPass.ATTACHMENT_STORE_OP_STORE
+      },
+      Vk.zero {
+        VkPass.finalLayout = Vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        VkPass.format = deviceDepthImageFormat,
+        VkPass.initialLayout =
+          Vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
         VkPass.loadOp = VkPass.ATTACHMENT_LOAD_OP_LOAD,
         VkPass.samples = Vk.SAMPLE_COUNT_1_BIT,
         VkPass.stencilLoadOp = VkPass.ATTACHMENT_LOAD_OP_DONT_CARE,
@@ -190,9 +203,15 @@ createRenderPass allocator device format = do
     ],
     VkPass.subpasses = V.fromList [
       Vk.zero {
-        VkPass.colorAttachments = V.singleton $ Vk.zero {
-          VkPass.attachment = 0,
-          VkPass.layout = Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+        VkPass.colorAttachments = V.fromList [
+          Vk.zero {
+            VkPass.attachment = 0,
+            VkPass.layout = Vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+          }
+        ],
+        VkPass.depthStencilAttachment = Just $ Vk.zero {
+          VkPass.attachment = 1,
+          VkPass.layout = Vk.IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL
         },
         VkPass.pipelineBindPoint = Vk.PIPELINE_BIND_POINT_GRAPHICS
       }

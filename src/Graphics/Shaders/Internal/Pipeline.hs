@@ -352,6 +352,13 @@ compilePipeline pipeline = do
       },
       VkPipeline.attachmentCount = 1
     },
+    VkPipeline.depthStencilState = Just $ Vk.zero {
+      VkPipeline.depthCompareOp = Vk.COMPARE_OP_LESS,
+      VkPipeline.depthTestEnable = True,
+      VkPipeline.depthWriteEnable = True,
+      VkPipeline.minDepthBounds = 0,
+      VkPipeline.maxDepthBounds = 1
+    },
     VkPipeline.dynamicState = Just $ Vk.zero {
       VkPipeline.dynamicStates = V.fromList [
         VkPipeline.DYNAMIC_STATE_PRIMITIVE_TOPOLOGY,
@@ -498,58 +505,112 @@ runRender (Render m) = do
 clearWindow :: (MonadIO m, HasSwapchain m) => Render m ()
 clearWindow = do
   (_, Frame{..}) <- getCurrentFrame
-  ((colorImage, _), _) <- getCurrentSwapImage
+  ((colorImage, depthImage), _) <- getCurrentSwapImage
   let commandBuffer = frameCommandBuffer
 
-  let presentToClearMemoryBarrier = Vk.zero {
-    VkBarrier.dstAccessMask = Vk.ACCESS_TRANSFER_WRITE_BIT,
-    VkBarrier.dstQueueFamilyIndex = Vk.QUEUE_FAMILY_IGNORED,
-    VkBarrier.image = colorImage,
-    VkBarrier.newLayout = Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-    VkBarrier.oldLayout = Vk.IMAGE_LAYOUT_UNDEFINED,
-    VkBarrier.srcAccessMask = Vk.ACCESS_MEMORY_READ_BIT,
-    VkBarrier.srcQueueFamilyIndex = Vk.QUEUE_FAMILY_IGNORED,
-    VkBarrier.subresourceRange = Vk.zero {
-      VkImageView.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
-      VkImageView.layerCount = 1,
-      VkImageView.levelCount = 1
-    }
-  }
+  let imagesToClearMemoryBarriers = V.fromList [
+          SomeStruct $ Vk.zero {
+            VkBarrier.dstAccessMask = Vk.ACCESS_TRANSFER_WRITE_BIT,
+            VkBarrier.dstQueueFamilyIndex = Vk.QUEUE_FAMILY_IGNORED,
+            VkBarrier.image = colorImage,
+            VkBarrier.newLayout = Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VkBarrier.oldLayout = Vk.IMAGE_LAYOUT_UNDEFINED,
+            VkBarrier.srcAccessMask = Vk.ACCESS_MEMORY_READ_BIT,
+            VkBarrier.srcQueueFamilyIndex = Vk.QUEUE_FAMILY_IGNORED,
+            VkBarrier.subresourceRange = Vk.zero {
+              VkImageView.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
+              VkImageView.layerCount = 1,
+              VkImageView.levelCount = 1
+            }
+          },
+          SomeStruct $ Vk.zero {
+            VkBarrier.dstAccessMask = Vk.ACCESS_TRANSFER_WRITE_BIT,
+            VkBarrier.dstQueueFamilyIndex = Vk.QUEUE_FAMILY_IGNORED,
+            VkBarrier.image = depthImage,
+            VkBarrier.newLayout = Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VkBarrier.oldLayout = Vk.IMAGE_LAYOUT_UNDEFINED,
+            VkBarrier.srcAccessMask = Vk.ACCESS_MEMORY_READ_BIT,
+            VkBarrier.srcQueueFamilyIndex = Vk.QUEUE_FAMILY_IGNORED,
+            VkBarrier.subresourceRange = Vk.zero {
+              VkImageView.aspectMask = Vk.IMAGE_ASPECT_DEPTH_BIT,
+              VkImageView.layerCount = 1,
+              VkImageView.levelCount = 1
+            }
+          }
+        ]
 
-  let clearToPresentMemoryBarrier = Vk.zero {
-    VkBarrier.dstAccessMask = Vk.ACCESS_MEMORY_READ_BIT,
-    VkBarrier.dstQueueFamilyIndex = Vk.QUEUE_FAMILY_IGNORED,
-    VkBarrier.image = colorImage,
-    VkBarrier.newLayout = Vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
-    VkBarrier.oldLayout = Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-    VkBarrier.srcAccessMask = Vk.ACCESS_TRANSFER_WRITE_BIT,
-    VkBarrier.srcQueueFamilyIndex = Vk.QUEUE_FAMILY_IGNORED,
-    VkBarrier.subresourceRange = Vk.zero {
-      VkImageView.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
-      VkImageView.layerCount = 1,
-      VkImageView.levelCount = 1
-    }
-  }
+  let imagesFromClearMemoryBarriers = V.fromList [
+          SomeStruct $ Vk.zero {
+            VkBarrier.dstAccessMask = Vk.ACCESS_MEMORY_READ_BIT,
+            VkBarrier.dstQueueFamilyIndex = Vk.QUEUE_FAMILY_IGNORED,
+            VkBarrier.image = colorImage,
+            VkBarrier.newLayout = Vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            VkBarrier.oldLayout = Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VkBarrier.srcAccessMask = Vk.ACCESS_TRANSFER_WRITE_BIT,
+            VkBarrier.srcQueueFamilyIndex = Vk.QUEUE_FAMILY_IGNORED,
+            VkBarrier.subresourceRange = Vk.zero {
+              VkImageView.aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
+              VkImageView.layerCount = 1,
+              VkImageView.levelCount = 1
+            }
+          },
+          SomeStruct $ Vk.zero {
+            VkBarrier.dstAccessMask = Vk.ACCESS_MEMORY_READ_BIT,
+            VkBarrier.dstQueueFamilyIndex = Vk.QUEUE_FAMILY_IGNORED,
+            VkBarrier.image = depthImage,
+            VkBarrier.newLayout =
+              Vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            VkBarrier.oldLayout = Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VkBarrier.srcAccessMask = Vk.ACCESS_TRANSFER_WRITE_BIT,
+            VkBarrier.srcQueueFamilyIndex = Vk.QUEUE_FAMILY_IGNORED,
+            VkBarrier.subresourceRange = Vk.zero {
+              VkImageView.aspectMask = Vk.IMAGE_ASPECT_DEPTH_BIT,
+              VkImageView.layerCount = 1,
+              VkImageView.levelCount = 1
+            }
+          }
+        ]
 
+  -- Transition images to optimal layout for clearing.
   VkCmd.cmdPipelineBarrier commandBuffer Vk.PIPELINE_STAGE_TRANSFER_BIT
-        Vk.PIPELINE_STAGE_TRANSFER_BIT Vk.zero mempty mempty
-    . V.singleton . SomeStruct $ presentToClearMemoryBarrier
+    Vk.PIPELINE_STAGE_TRANSFER_BIT Vk.zero mempty mempty
+    imagesToClearMemoryBarriers
 
-  let clearColor = VkCmd.Int32 0 0 0 0
-      subresourceRange = VkImageView.ImageSubresourceRange {
+  -- Clear surface colour image.
+  let colorSubresourceRange = VkImageView.ImageSubresourceRange {
           aspectMask = Vk.IMAGE_ASPECT_COLOR_BIT,
           baseMipLevel = 0,
           levelCount = 1,
           baseArrayLayer = 0,
           layerCount = 1
         }
+      clearColor = VkCmd.Float32 0 0 0 0
+
   VkCmd.cmdClearColorImage commandBuffer colorImage
         Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL clearColor
-    . V.singleton $ subresourceRange
+    . V.singleton $ colorSubresourceRange
 
+  -- Clear depth image.
+  let depthSubresourceRange = VkImageView.ImageSubresourceRange {
+          aspectMask = Vk.IMAGE_ASPECT_DEPTH_BIT,
+          baseMipLevel = 0,
+          levelCount = 1,
+          baseArrayLayer = 0,
+          layerCount = 1
+        }
+      clearDepth = VkCmd.ClearDepthStencilValue {
+          depth = 1,
+          stencil = 0
+        }
+
+  VkCmd.cmdClearDepthStencilImage commandBuffer depthImage
+        Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL clearDepth
+    . V.singleton $ depthSubresourceRange
+
+  -- Transition images back.
   VkCmd.cmdPipelineBarrier commandBuffer Vk.PIPELINE_STAGE_TRANSFER_BIT
-        Vk.PIPELINE_STAGE_ALL_GRAPHICS_BIT Vk.zero mempty mempty
-    . V.singleton . SomeStruct $ clearToPresentMemoryBarrier
+    Vk.PIPELINE_STAGE_ALL_GRAPHICS_BIT Vk.zero mempty mempty
+    imagesFromClearMemoryBarriers
 
 
 drawWindow :: forall m e. (MonadIO m, MonadLogger m, HasVulkanDevice m,
