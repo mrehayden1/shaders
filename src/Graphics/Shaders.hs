@@ -1,13 +1,11 @@
 module Graphics.Shaders (
-  module Graphics.Shaders.Class,
-
   MonadShaders,
 
-  HasVulkan(..),
-
   ShadersT,
-  runShadersT
+  runShadersT,
+
+  awaitIdle,
+  swap
 ) where
 
 import Graphics.Shaders.Base
-import Graphics.Shaders.Class

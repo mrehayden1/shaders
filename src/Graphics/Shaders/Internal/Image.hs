@@ -22,9 +22,10 @@ import Vulkan.Core10.OtherTypes as VkBarrier (ImageMemoryBarrier(..))
 import Vulkan.CStruct.Extends
 import Vulkan.Zero as Vk
 
-import Graphics.Shaders.Class
 import Graphics.Shaders.Exception
 import Graphics.Shaders.Internal.Command
+import Graphics.Shaders.Internal.Device
+import Graphics.Shaders.Internal.Instance
 import Graphics.Shaders.Internal.Memory
 import Graphics.Shaders.Logger.Class
 
@@ -103,7 +104,7 @@ transitionImageLayout :: (MonadAsyncException m, MonadLogger m,
   -> m ()
 transitionImageLayout image oldLayout newLayout = do
   device <- getDevice
-  queue <- getDeviceQueue
+  queue <- getQueue
   commandPool <- getCommandPool
 
   withOneTimeSubmitCommandBuffer device queue commandPool $
@@ -154,7 +155,7 @@ copyBufferToImage :: (MonadAsyncException m, MonadLogger m, HasVulkanDevice m)
   -> m ()
 copyBufferToImage buffer image width height = do
   device <- getDevice
-  queue <- getDeviceQueue
+  queue <- getQueue
   commandPool <- getCommandPool
 
   withOneTimeSubmitCommandBuffer device queue commandPool $

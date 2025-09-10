@@ -18,9 +18,10 @@ import qualified Vulkan.Core10.Memory as VkMemory
 import qualified Vulkan.Core10.Sampler as VkSampler
 import Vulkan.Zero as Vk
 
-import Graphics.Shaders.Class
 import Graphics.Shaders.Internal.Buffer
+import Graphics.Shaders.Internal.Device
 import Graphics.Shaders.Internal.Image
+import Graphics.Shaders.Internal.Instance
 import Graphics.Shaders.Logger.Class
 import Graphics.Shaders.Texture.Loader.TGA
 

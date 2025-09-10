@@ -9,6 +9,8 @@ module Graphics.Shaders.Logger.Class (
   err
 ) where
 
+import Control.Monad.Codensity
+import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Trans.Maybe
 import Control.Monad.Trans.Resource
@@ -17,6 +19,7 @@ class Monad m => MonadLogger m where
   loggerLevel :: m LogLevel
   default loggerLevel :: (t m' ~ m, MonadTrans t, MonadLogger m') => m LogLevel
   loggerLevel = lift loggerLevel
+
   loggerLog :: LogLevel -> String -> m ()
   loggerLog lvl = lift . loggerLog lvl
   default loggerLog :: (t m' ~ m, MonadTrans t, MonadLogger m')
@@ -26,6 +29,10 @@ class Monad m => MonadLogger m where
 
 data LogLevel = LogTrace | LogDebug | LogInfo | LogWarn | LogError | LogNone
  deriving (Eq, Ord, Show)
+
+
+instance MonadLogger m => MonadLogger (Codensity m)
+
 
 -- Extra information
 logTrace :: MonadLogger m => String -> m ()
@@ -48,14 +55,7 @@ err :: MonadLogger m => String -> m ()
 err = loggerLog LogError
 
 
-instance (MonadLogger m) => MonadLogger (ResourceT m) where
-  loggerLevel = lift loggerLevel
-  loggerLog lvl = lift . loggerLog lvl
-
-instance (MonadLogger m) => MonadLogger (MaybeT m) where
-  loggerLevel = lift loggerLevel
-  loggerLog lvl = lift . loggerLog lvl
-
-instance (MonadLogger m) => MonadLogger (StateT s m) where
-  loggerLevel = lift loggerLevel
-  loggerLog lvl = lift . loggerLog lvl
+instance (MonadLogger m) => MonadLogger (ResourceT m)
+instance (MonadLogger m) => MonadLogger (MaybeT m)
+instance (MonadLogger m) => MonadLogger (StateT s m)
+instance (MonadLogger m) => MonadLogger (ReaderT e m)

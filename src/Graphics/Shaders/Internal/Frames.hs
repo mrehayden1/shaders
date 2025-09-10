@@ -9,7 +9,6 @@ import Control.Monad
 import Control.Monad.Trans.Resource
 import Data.Vector (Vector)
 import qualified Data.Vector as V
-import Vulkan.Core10.AllocationCallbacks
 import qualified Vulkan.Core10 as Vk
 import qualified Vulkan.Core10.CommandBuffer as VkCmdBuffer
 import qualified Vulkan.Core10.Fence as VkFence
@@ -18,6 +17,7 @@ import qualified Vulkan.Zero as Vk
 
 import Graphics.Shaders.Logger.Class
 import Graphics.Shaders.Internal.Device
+import Graphics.Shaders.Internal.Instance
 
 framesInFlight :: Int
 framesInFlight = 2
@@ -35,52 +35,54 @@ data SyncObjects = SyncObjects {
   syncRenderFinishedSemaphore :: Vk.Semaphore
 }
 
-createFrames :: (MonadLogger m, MonadResource m)
-  => Maybe AllocationCallbacks
-  -> Device
-  -> m (Vector Frame)
-createFrames allocator device = do
-  commandBuffers <- createCommandBuffers device framesInFlight
-  syncObjects <- createSyncObjects allocator device framesInFlight
+createFrames :: (HasVulkan m, HasVulkanDevice m, MonadLogger m,
+       MonadResource m)
+  => m (Vector Frame)
+createFrames = do
+  commandBuffers <- createCommandBuffers framesInFlight
+  syncObjects <- createSyncObjects framesInFlight
   return . V.zipWith Frame commandBuffers $ syncObjects
 
-createSyncObjects :: (MonadLogger m, MonadResource m)
-  => Maybe AllocationCallbacks
-  -> Device
-  -> Int
+createSyncObjects :: (MonadLogger m, MonadResource m, HasVulkan m,
+       HasVulkanDevice m)
+  => Int
   -> m (Vector SyncObjects)
-createSyncObjects allocator Device{..} n = do
+createSyncObjects n = do
+  allocator <- getVulkanAllocator
+  device <- getDevice
 
   fmap V.fromList . replicateM n $ do
     debug "Creating render finished semaphore."
     (_, renderFinishedSemaphore) <- allocate
-      (VkSemaphore.createSemaphore deviceHandle Vk.zero allocator)
+      (VkSemaphore.createSemaphore device Vk.zero allocator)
       (\semaphore ->
-         VkSemaphore.destroySemaphore deviceHandle semaphore allocator
+         VkSemaphore.destroySemaphore device semaphore allocator
       )
     debug "Creating in flight fence."
     -- Unsignalled fence object by default.
     let inFlightFenceCreateInfo = Vk.zero
     (_, inFlightFence) <- allocate
-      (VkFence.createFence deviceHandle inFlightFenceCreateInfo allocator)
-      (\fence -> VkFence.destroyFence deviceHandle fence allocator)
+      (VkFence.createFence device inFlightFenceCreateInfo allocator)
+      (\fence -> VkFence.destroyFence device fence allocator)
     return $ SyncObjects {
         syncInFlightFence = inFlightFence,
         syncRenderFinishedSemaphore = renderFinishedSemaphore
       }
 
-createCommandBuffers :: (MonadLogger m, MonadResource m)
-  => Device
-  -> Int
+createCommandBuffers :: (MonadLogger m, MonadResource m, HasVulkanDevice m)
+  => Int
   -> m (Vector Vk.CommandBuffer)
-createCommandBuffers Device{..} n = do
+createCommandBuffers n = do
+  device <- getDevice
+  commandPool <- getCommandPool
+
   let commandBufferCreateInfo = Vk.zero {
     VkCmdBuffer.commandBufferCount = fromIntegral n,
-    VkCmdBuffer.commandPool = deviceCommandPool,
+    VkCmdBuffer.commandPool = commandPool,
     VkCmdBuffer.level = VkCmdBuffer.COMMAND_BUFFER_LEVEL_PRIMARY
   }
   debug "Allocating command buffer."
   snd <$> allocate
-    (VkCmdBuffer.allocateCommandBuffers deviceHandle commandBufferCreateInfo)
+    (VkCmdBuffer.allocateCommandBuffers device commandBufferCreateInfo)
     (\buffers -> do
-       VkCmdBuffer.freeCommandBuffers deviceHandle deviceCommandPool buffers)
+       VkCmdBuffer.freeCommandBuffers device commandPool buffers)

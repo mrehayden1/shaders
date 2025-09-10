@@ -49,9 +49,10 @@ import qualified Vulkan.Core10.Memory as VkMemory
 import qualified Vulkan.Core10.MemoryManagement as VkMemRequirements
 import qualified Vulkan.Zero as Vk
 
-import Graphics.Shaders.Class
 import Graphics.Shaders.Logger.Class
 import Graphics.Shaders.Internal.Command
+import Graphics.Shaders.Internal.Device
+import Graphics.Shaders.Internal.Instance
 import Graphics.Shaders.Internal.Memory
 
 -- BufferAccess - Buffer usage type.
@@ -141,7 +142,7 @@ createBufferReadOnly :: forall a m. (MonadAsyncException m, MonadLogger m,
   -> m (Buffer 'ReadOnly a)
 createBufferReadOnly vertices = do
   deviceHandle <- getDevice
-  queueHandle <- getDeviceQueue
+  queueHandle <- getQueue
   commandPool <- getCommandPool
 
   let ToBuffer (Kleisli calcAlign) (Kleisli bufferer) _ alignMode usageFlags

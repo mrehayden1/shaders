@@ -68,10 +68,14 @@ class Monad m => HasWindow m where
     => GLFW.CursorInputMode -> m ()
   setCursorInputMode = lift . setCursorInputMode
 
-  windowShouldClose :: (HasWindow m) => m Bool
+  windowShouldClose :: m Bool
   default windowShouldClose :: (t m' ~ m, HasWindow m', MonadTrans t)
     => m Bool
   windowShouldClose = lift windowShouldClose
+
+
+instance HasWindow m => HasWindow (ReaderT e m)
+instance HasWindow m => HasWindow (ResourceT m)
 
 
 withWindowSurface :: (MonadAsyncException m, HasWindow m)
@@ -92,9 +96,8 @@ data GlfwWindowState = GlfwWindowState {
 newtype GlfwWindowT m a = GlfwWindowT {
   unGlfwWindowT :: ReaderT GlfwWindowState m a
 } deriving (Functor, Applicative, Monad, MonadTrans, MonadIO, MonadException,
-    MonadAsyncException, MonadUnliftIO)
+    MonadAsyncException, MonadUnliftIO, MonadLogger)
 
-instance MonadLogger m => MonadLogger (GlfwWindowT m)
 
 instance MonadIO m => HasWindow (GlfwWindowT m) where
   createWindowSurface allocator vkInstance = do

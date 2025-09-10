@@ -1,10 +1,17 @@
 module Graphics.Shaders.Internal.Instance (
-  withInstance
+  HasVulkan(..),
+
+  VulkanReaderT(..),
+  runVulkanReaderT,
+
+  createInstance
 ) where
 
 import Control.Monad
+import Control.Monad.Codensity
 import Control.Monad.Exception
 import Control.Monad.IO.Class
+import Control.Monad.Reader
 import Control.Monad.Trans.Resource
 import Data.ByteString
 import Data.ByteString.Char8 as BS8
@@ -17,19 +24,53 @@ import Vulkan.Core10.DeviceInitialization as VkApp (
   ApplicationInfo(..))
 import qualified Vulkan.Core10.DeviceInitialization as VkInit
 import Vulkan.Core10.ExtensionDiscovery as VkExt
-import Vulkan.Extensions.VK_EXT_validation_features as VkValidation
-import Vulkan.Extensions.VK_KHR_surface as VkSurface
 import Vulkan.Core10.Handles as Vk
 import Vulkan.Core10.LayerDiscovery as VkLayer
 import Vulkan.Core13 as Vk13
+import Vulkan.Extensions.VK_EXT_validation_features as VkValidation
+import Vulkan.Extensions.VK_KHR_surface as VkSurface
 import Vulkan.Zero as Vk
 
+import Graphics.Shaders.Internal.Window
 import Graphics.Shaders.Logger.Class
 
-withInstance :: (MonadAsyncException m, MonadLogger m, MonadResource m)
+
+class Monad m => HasVulkan m where
+  getVulkanAllocator :: m (Maybe AllocationCallbacks)
+  default getVulkanAllocator :: (t m' ~ m, MonadTrans t, HasVulkan m')
+    => m (Maybe AllocationCallbacks)
+  getVulkanAllocator = lift getVulkanAllocator
+
+  getVulkanInstance :: m Vk.Instance
+  default getVulkanInstance :: (t m' ~ m, MonadTrans t, HasVulkan m')
+    => m Vk.Instance
+  getVulkanInstance = lift getVulkanInstance
+
+instance HasVulkan m => HasVulkan (Codensity m)
+instance HasVulkan m => HasVulkan (ReaderT e m)
+
+
+newtype VulkanReaderT m a = VulkanReaderT {
+  unVulkanReaderT :: ReaderT (Vk.Instance, Maybe AllocationCallbacks) m a
+} deriving (Functor, Applicative, Monad, MonadIO, MonadException,
+    MonadAsyncException, MonadTrans, MonadFix, MonadResource, MonadLogger,
+    HasWindow)
+
+runVulkanReaderT :: Vk.Instance
+  -> Maybe AllocationCallbacks
+  -> VulkanReaderT m a
+  -> m a
+runVulkanReaderT vkInstance allocator (VulkanReaderT m) = runReaderT m (vkInstance, allocator)
+
+instance Monad m => HasVulkan (VulkanReaderT m) where
+  getVulkanAllocator = VulkanReaderT $ asks snd
+  getVulkanInstance = VulkanReaderT $ asks fst
+
+
+createInstance :: (MonadAsyncException m, MonadLogger m, MonadResource m)
   => Maybe AllocationCallbacks
   -> m Vk.Instance
-withInstance allocator = do
+createInstance allocator = do
   logLevel <- loggerLevel
 
   when (logLevel <= LogTrace) $ do

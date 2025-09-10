@@ -11,7 +11,7 @@ module Graphics.Shaders.Internal.Pipeline (
 
   compilePipeline,
 
-  Render,
+  Render(..),
   runRender,
 
   clearWindow,
@@ -79,16 +79,17 @@ import Vulkan.CStruct.Extends (SomeStruct(..))
 import qualified Vulkan.Zero as Vk
 
 import Control.Monad.State.Extra
-import Graphics.Shaders.Class
 import Graphics.Shaders.Internal.Buffer
 import Graphics.Shaders.Internal.DeclM
+import Graphics.Shaders.Internal.Device
 import Graphics.Shaders.Internal.Expr
 import Graphics.Shaders.Internal.FragmentStream
+import Graphics.Shaders.Internal.Instance
 import Graphics.Shaders.Internal.PrimitiveArray
 import Graphics.Shaders.Internal.PrimitiveStream
+import Graphics.Shaders.Internal.Swapchain
 import Graphics.Shaders.Internal.Texture
 import Graphics.Shaders.Logger.Class
-import Graphics.Shaders.Orphans ()
 
 data CompiledPipeline e = CompiledPipeline {
   compiledPipeline :: VkPipeline.Pipeline,
@@ -491,19 +492,19 @@ runRender (Render m) = do
       fmap VkCmd.commandBufferHandle . V.fromList $ [ commandBuffer ],
     VkQueue.signalSemaphores = V.singleton syncRenderFinishedSemaphore
   }
-  queue <- getDeviceQueue
+  queue <- getQueue
   VkQueue.queueSubmit queue submitInfos syncInFlightFence
 
 clearWindow :: (MonadIO m, HasSwapchain m) => Render m ()
 clearWindow = do
   (_, Frame{..}) <- getCurrentFrame
-  (image, _) <- getCurrentSwapImage
+  ((colorImage, _), _) <- getCurrentSwapImage
   let commandBuffer = frameCommandBuffer
 
   let presentToClearMemoryBarrier = Vk.zero {
     VkBarrier.dstAccessMask = Vk.ACCESS_TRANSFER_WRITE_BIT,
     VkBarrier.dstQueueFamilyIndex = Vk.QUEUE_FAMILY_IGNORED,
-    VkBarrier.image = image,
+    VkBarrier.image = colorImage,
     VkBarrier.newLayout = Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
     VkBarrier.oldLayout = Vk.IMAGE_LAYOUT_UNDEFINED,
     VkBarrier.srcAccessMask = Vk.ACCESS_MEMORY_READ_BIT,
@@ -518,7 +519,7 @@ clearWindow = do
   let clearToPresentMemoryBarrier = Vk.zero {
     VkBarrier.dstAccessMask = Vk.ACCESS_MEMORY_READ_BIT,
     VkBarrier.dstQueueFamilyIndex = Vk.QUEUE_FAMILY_IGNORED,
-    VkBarrier.image = image,
+    VkBarrier.image = colorImage,
     VkBarrier.newLayout = Vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
     VkBarrier.oldLayout = Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
     VkBarrier.srcAccessMask = Vk.ACCESS_TRANSFER_WRITE_BIT,
@@ -542,7 +543,7 @@ clearWindow = do
           baseArrayLayer = 0,
           layerCount = 1
         }
-  VkCmd.cmdClearColorImage commandBuffer image
+  VkCmd.cmdClearColorImage commandBuffer colorImage
         Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL clearColor
     . V.singleton $ subresourceRange
 
@@ -603,7 +604,7 @@ drawWindow e CompiledPipeline{..} = do
 
   flip runCodensity return $ do
     -- Use Codensity to bracket command buffer recording and render pass.
-    extent <- getSwapChainExtent
+    extent <- getSwapchainExtent
     renderPass <- getRenderPass
 
     -- Transfer data in staging buffers to their writable buffer.

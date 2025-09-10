@@ -15,8 +15,9 @@ import qualified Vulkan.Core10.MemoryManagement as VkMemRequirements
 import qualified Vulkan.Zero as Vk
 
 import Data.Bits.Extra
-import Graphics.Shaders.Class
 import Graphics.Shaders.Exception
+import Graphics.Shaders.Internal.Device
+import Graphics.Shaders.Internal.Instance
 import Graphics.Shaders.Logger.Class
 
 allocateMemory :: (MonadAsyncException m, MonadLogger m, MonadResource m,
@@ -25,7 +26,7 @@ allocateMemory :: (MonadAsyncException m, MonadLogger m, MonadResource m,
   -> Vk.MemoryPropertyFlags
   -> m (ReleaseKey, Vk.DeviceMemory)
 allocateMemory memoryRequirements memoryPropertyFlags = do
-  memoryProperties <- getDeviceMemoryProperties
+  memoryProperties <- getMemoryProperties
   allocator <- getVulkanAllocator
   device <- getDevice
   -- Find compatible memory

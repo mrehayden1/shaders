@@ -29,6 +29,9 @@ appLoggingLevel :: LogLevel
 appLoggingLevel = LogTrace
 --appLoggingLevel = LogDebug
 --appLoggingLevel = LogInfo
+--appLoggingLevel = LogWarn
+--appLoggingLevel = LogError
+--appLoggingLevel = LogNone
 
 type Vertex = (B4 Float, B4 Float, B2 Float)
 type Instance =  V4 (B4 Float)
@@ -52,7 +55,7 @@ main = do
 
   putStrLn "Exited."
 
-app :: (MonadShaders m, MonadLogger m, HasWindow m) => m ()
+app :: MonadShaders m => ShadersT m ()
 app = do
   let triangleVertices = [
           (V2   0.0  (-0.5), V4 1.0 0.0 0.0 1),

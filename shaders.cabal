@@ -31,7 +31,6 @@ library
       Graphics.Shaders
       Graphics.Shaders.Base
       Graphics.Shaders.Buffer
-      Graphics.Shaders.Class
       Graphics.Shaders.Exception
       Graphics.Shaders.Expr
       Graphics.Shaders.FragmentStream
@@ -40,7 +39,6 @@ library
       Graphics.Shaders.Internal.DeclM
       Graphics.Shaders.Internal.Device
       Graphics.Shaders.Internal.Device.Physical
-      Graphics.Shaders.Internal.Device.SwapChain
       Graphics.Shaders.Internal.Expr
       Graphics.Shaders.Internal.FragmentStream
       Graphics.Shaders.Internal.Frames
@@ -51,6 +49,7 @@ library
       Graphics.Shaders.Internal.PrimitiveArray
       Graphics.Shaders.Internal.PrimitiveStream
       Graphics.Shaders.Internal.Sampler
+      Graphics.Shaders.Internal.Swapchain
       Graphics.Shaders.Internal.Texture
       Graphics.Shaders.Internal.Window
       Graphics.Shaders.Logger

@@ -1,6 +1,9 @@
 module Graphics.Shaders.Internal.Device.Physical (
   PhysicalDevice(..),
-  SwapChainSettings(..),
+  SwapchainSettings(..),
+
+  deviceColorImageFormat,
+  deviceDepthImageFormat,
 
   getSuitableDevices
 ) where
@@ -33,17 +36,23 @@ import Data.Bits.Extra
 import Graphics.Shaders.Internal.Window
 import Graphics.Shaders.Logger.Class
 
+deviceColorImageFormat :: Vk.Format
+deviceColorImageFormat = Vk.FORMAT_B8G8R8A8_SRGB
+
+deviceDepthImageFormat :: Vk.Format
+deviceDepthImageFormat = Vk.FORMAT_D32_SFLOAT
+
 -- A graphics enabled physical device, such as a GPU or CPU.
 data PhysicalDevice = PhysicalDevice {
     physicalDeviceHandle :: Vk.PhysicalDevice,
     physicalDeviceMemoryProperties :: VkDevice.PhysicalDeviceMemoryProperties,
     physicalDeviceProperties :: VkDevice.PhysicalDeviceProperties,
     physicalDeviceQueueFamilyIndex :: Word32,
-    physicalDeviceSwapChainSettings :: SwapChainSettings
+    physicalDeviceSwapchainSettings :: SwapchainSettings
   } deriving (Show)
 
 -- A physical device's swap chain settings
-data SwapChainSettings = SwapChainSettings {
+data SwapchainSettings = SwapchainSettings {
     swapSettingsExtent :: Extent2D,
     swapSettingsImageCount :: Word32,
     swapSettingsPresentMode :: VkSurface.PresentModeKHR,
@@ -122,9 +131,9 @@ getSuitableDevices vkInstance surface requiredExtensions = do
     debug . printf "Chosen queue family %d." $ queueFamilyIndex
 
     -- Try to get the required surface capabilities, formats, present modes.
-    swapChainSupport <- tryGetSwapChainSupport device surface
+    swapchainSupport <- tryGetSwapchainSupport device surface
     logTrace "Dumping device swap chain support."
-    logTrace . show $ swapChainSupport
+    logTrace . show $ swapchainSupport
 
     -- Try to get the required depth format.
     depthFormat <- tryGetDepthFormat device
@@ -140,7 +149,7 @@ getSuitableDevices vkInstance surface requiredExtensions = do
           physicalDeviceMemoryProperties = memoryProperties,
           physicalDeviceProperties = properties,
           physicalDeviceQueueFamilyIndex = queueFamilyIndex,
-          physicalDeviceSwapChainSettings = swapChainSupport
+          physicalDeviceSwapchainSettings = swapchainSupport
         }
 
     return physicalDevice
@@ -160,11 +169,11 @@ scoreSuitability device =
 
 -- Try to get swap chain info, failing when the surface support doesn't meet
 -- requirements.
-tryGetSwapChainSupport :: (MonadIO m, MonadLogger m, HasWindow m)
+tryGetSwapchainSupport :: (MonadIO m, MonadLogger m, HasWindow m)
   => Vk.PhysicalDevice
   -> VkSurface.SurfaceKHR
-  -> MaybeT m SwapChainSettings
-tryGetSwapChainSupport device surface = do
+  -> MaybeT m SwapchainSettings
+tryGetSwapchainSupport device surface = do
   -- Note that we've already checked if there is a queue family that supports
   -- the VK_KHR_surface extension on this device as required by
   -- `vkGetPhysicalDeviceSurfaceCapabilitiesKHR`.
@@ -219,18 +228,18 @@ tryGetSwapChainSupport device surface = do
   when (res0 == Vk.INCOMPLETE) $
     warn "Vulkan API returned incomplete surface formats list."
   logTrace . show $ surfaceFormats
-  let surfaceFormat = VkSurface.SurfaceFormatKHR {
+  let requiredSurfaceFormat = VkSurface.SurfaceFormatKHR {
                           VkSurface.colorSpace =
                             VkSurface.COLOR_SPACE_SRGB_NONLINEAR_KHR,
-                          VkSurface.format = Vk.FORMAT_B8G8R8A8_SRGB
+                          VkSurface.format = deviceColorImageFormat
                         }
-      hasSurfaceFormat = elem surfaceFormat . V.toList $ surfaceFormats
+      hasSurfaceFormat = elem requiredSurfaceFormat . V.toList $ surfaceFormats
   unless hasSurfaceFormat $ do
     let errStr = printf "Missing required surface format %s" . show
-                   $ surfaceFormat
+                   $ requiredSurfaceFormat
     err errStr
     fail errStr
-  debug . printf "Chosen surface format %s." . show $ surfaceFormat
+  debug . printf "Chosen surface format %s." . show $ requiredSurfaceFormat
 
   -- Make sure we have the present mode we want.
   debug "Checking deivce present modes."
@@ -248,11 +257,11 @@ tryGetSwapChainSupport device surface = do
     fail errStr
   debug . printf "Chosen present mode %s." . show $ presentMode
 
-  return $ SwapChainSettings {
+  return $ SwapchainSettings {
       swapSettingsExtent = Extent2D extentWidth extentHeight,
       swapSettingsImageCount = imageCount,
       swapSettingsPresentMode = presentMode,
-      swapSettingsSurfaceFormat = surfaceFormat,
+      swapSettingsSurfaceFormat = requiredSurfaceFormat,
       swapSettingsTransform = transform
     }
 
@@ -261,19 +270,18 @@ tryGetDepthFormat :: (MonadIO m, MonadLogger m)
   -> MaybeT m Vk.Format
 tryGetDepthFormat device = do
   debug "Getting required depth format."
-  let requiredDepthFormat = Vk.FORMAT_D32_SFLOAT
   formatProperties <- VkDevice.getPhysicalDeviceFormatProperties device
-    requiredDepthFormat
+    deviceDepthImageFormat
   let hasDepthFormat =
         (.?. VkDevice.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)
           . VkDevice.optimalTilingFeatures
           $ formatProperties
   unless hasDepthFormat $ do
     let errStr = printf "Missing required depth format %s" . show
-          $ requiredDepthFormat
+          $ deviceDepthImageFormat
     err errStr
     fail errStr
-  return requiredDepthFormat
+  return deviceDepthImageFormat
 
 -- Checks that a device has at least one queue family that can do everything
 -- we want and try to pick it. This is pretty much always going to be possible.
