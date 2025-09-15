@@ -652,13 +652,13 @@ drawWindow e CompiledPipeline{..} = do
         uniformDescriptorWrites <> samplerDescriptorWrites
   VkDescr.updateDescriptorSets device descriptorWrites V.empty
 
-  -- Record transfer and draw commands.
+  -- Record draw commands.
   flip runCodensity return $ do
     -- Use Codensity to bracket command buffer recording and render pass.
     extent <- getSwapchainExtent
     renderPass <- getRenderPass
 
-    -- Synchronise buffer copies with writes
+    -- Synchronise buffer copies with reads
     VkCmd.cmdPipelineBarrier commandBuffer Vk.PIPELINE_STAGE_TRANSFER_BIT
       Vk.PIPELINE_STAGE_ALL_GRAPHICS_BIT Vk.zero mempty mempty mempty
 

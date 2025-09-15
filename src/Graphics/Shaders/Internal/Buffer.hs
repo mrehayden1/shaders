@@ -4,6 +4,7 @@ module Graphics.Shaders.Internal.Buffer (
   InputRate(..),
 
   B(..),
+  BIndex(..),
   B2(..),
   B3(..),
   B4(..),
@@ -205,7 +206,7 @@ type ValueProdM =
       Int           -- offset
     )
 
-data AlignMode = Align4Byte | AlignStd140
+data AlignMode = Align4Byte | AlignStd140 | AlignIndices
  deriving (Show, Eq)
 
 -- Aligns buffered elements to some constraint when writing to an std140
@@ -276,13 +277,13 @@ instance BufferFormat a => BufferFormat (Uniform a) where
 toBufferUnaligned :: forall a. Storable a => ToBuffer a (B a)
 toBufferUnaligned =
   ToBuffer
-    (Kleisli (const addOffset))
+    (Kleisli (const addOffsetToStride))
     (Kleisli doBuffer)
     (Kleisli (const valueProd))
     Align4Byte
     VkBuffer.BUFFER_USAGE_VERTEX_BUFFER_BIT
  where
-  addOffset = do
+  addOffsetToStride = do
     let sz = sizeOf (undefined :: a)
     modify (+ sz)
     return undefined
@@ -351,7 +352,6 @@ instance BufferFormat (B Word32) where
   type HostFormat (B Word32) = Word32
   toBuffer = toBufferUnaligned
 
-
 instance BufferFormat (B2 Float) where
   type HostFormat (B2 Float) = V2 Float
   toBuffer = toBufferB2
@@ -363,6 +363,20 @@ instance BufferFormat (B3 Float) where
 instance BufferFormat (B4 Float) where
   type HostFormat (B4 Float) = V4 Float
   toBuffer = toBufferB4
+
+
+-- Buffered data for use as indices only.
+--
+-- Index data must be tightly packed, but Word8 and Word16 are smaller than the
+-- alignment requirements of vertices and uniforms.
+newtype BIndex a = BIndex (B a)
+
+instance BufferFormat (BIndex Word16) where
+  type HostFormat (BIndex Word16) = Word16
+  toBuffer =
+    let ToBuffer offset buffer value _ usage
+          = toBufferUnaligned :: ToBuffer Word16 (B Word16)
+    in ToBuffer offset buffer value AlignIndices usage >>> arr BIndex
 
 
 instance BufferFormat (V0 a) where

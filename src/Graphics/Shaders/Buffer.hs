@@ -2,6 +2,7 @@ module Graphics.Shaders.Buffer (
   Buffer,
 
   B,
+  BIndex,
   B2,
   B3,
   B4,

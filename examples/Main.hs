@@ -6,6 +6,7 @@ import Control.Monad.Reader
 import Data.Functor
 import Data.IORef
 import Data.Time.Clock
+import Data.Word
 import Linear
 import Text.Printf
 
@@ -55,13 +56,17 @@ main = do
 app :: MonadShaders m => ShadersT m ()
 app = do
   let quadVertices = [
-          (V4 (-1) (-1) 0 1, V2 0 0),
-          (V4 (-1)   1  0 1, V2 0 1),
-          (V4   1  (-1) 0 1, V2 1 0),
-          (V4   1    1  0 1, V2 1 1)
+          (V4 (-1) (-1) 0 1, V2 0.05 0.05),
+          (V4 (-1)   1  0 1, V2 0.05 0.95),
+          (V4   1  (-1) 0 1, V2 0.95 0.05),
+          (V4   1    1  0 1, V2 0.95 0.95)
         ]
   quadBuffer <- createBuffer (length quadVertices)
   let quadVertexArray = toVertexArray quadBuffer
+
+  let quadIndices = [ 0, 1, 2, 3, 2, 1 ] :: [Word16]
+  quadIndexBuffer :: Buffer (BIndex Word16) <- createBuffer (length quadIndices)
+  let quadIndexArray = toIndexArray quadIndexBuffer
 
   let n = 10 :: Int
   let quadInstances = [0..(n^2 - 1)] <&> \x ->
@@ -74,8 +79,14 @@ app = do
   quadInstanceBuffer <- createBuffer (length quadInstances)
   let quadInstanceVertexArray = toVertexArray quadInstanceBuffer
 
+  {-
   let quadPrimitives = toPrimitiveArrayInstanced TriangleStrip quadVertexArray
           quadInstanceVertexArray
+        $ \(pos, uv) tm -> (pos, uv, tm)
+  -}
+
+  let quadPrimitives = toPrimitiveArrayIndexedInstanced TriangleList
+          quadIndexArray quadVertexArray quadInstanceVertexArray
         $ \(pos, uv) tm -> (pos, uv, tm)
 
   matrixBuffer <- createBuffer 1
@@ -108,6 +119,7 @@ app = do
   -- Initialise buffers
   runRender $ do
     writeBuffer quadBuffer quadVertices
+    writeBuffer quadIndexBuffer quadIndices
     writeBuffer quadInstanceBuffer quadInstances
 
   fix $ \loop -> do

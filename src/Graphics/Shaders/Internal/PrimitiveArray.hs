@@ -115,11 +115,8 @@ toIndexArray Buffer{..} =
 class IndexInput a where
   indexType :: a -> Vk.IndexType
 
-{- TODO Support 16-bit indices. We currently only support buffering of 4 byte
- - aligned data.
-instance IndexInput (B Word16) where
+instance IndexInput (BIndex Word16) where
   indexType _ = Vk.INDEX_TYPE_UINT16
--}
 
 instance IndexInput (B Word32) where
   indexType _ = Vk.INDEX_TYPE_UINT32
