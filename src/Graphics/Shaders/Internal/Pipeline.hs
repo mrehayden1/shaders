@@ -6,13 +6,15 @@ module Graphics.Shaders.Internal.Pipeline (
   SamplerBinding(..),
   BufferGetter(..),
 
-  PrimitiveStream,
-  FragmentStream,
+  PrimitiveStream(..),
+  FragmentStream(..),
 
   compilePipeline,
 
   Render(..),
   runRender,
+
+  writeBuffer,
 
   clearWindow,
   drawWindow,
@@ -32,7 +34,6 @@ import Control.Monad.IO.Class
 import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Trans.Resource
-import Control.Monad.Writer
 import Data.Bits
 import Data.ByteString (ByteString)
 import Data.Char
@@ -65,8 +66,6 @@ import qualified Vulkan.Core10.Enums as Vk
 import qualified Vulkan.Core10.Handles as Vk
 import qualified Vulkan.Core10.ImageView as VkImageView
 import Vulkan.Core10.OtherTypes as VkBarrier (ImageMemoryBarrier(..))
-import qualified Vulkan.Core10.Pipeline as VkBinding (
-  VertexInputBindingDescription(..))
 import qualified Vulkan.Core10.Pipeline as VkPipeline hiding (
   ComputePipelineCreateInfo(..))
 import qualified Vulkan.Core10.PipelineLayout as VkPipeline
@@ -74,8 +73,14 @@ import qualified Vulkan.Core10.Queue as VkQueue
 import qualified Vulkan.Core10.FundamentalTypes as VkExtent2D (Extent2D(..))
 import qualified Vulkan.Core10.FundamentalTypes as VkRect2D (Rect2D(..))
 import qualified Vulkan.Core10.Shader as VkShader
-import qualified Vulkan.Core13.Promoted_From_VK_EXT_extended_dynamic_state as VkCmd
+import qualified Vulkan.Core13.Promoted_From_VK_EXT_extended_dynamic_state
+  as VkCmd
 import Vulkan.CStruct.Extends (SomeStruct(..))
+import Vulkan.Extensions.VK_EXT_vertex_input_dynamic_state as VkVertexInput
+import Vulkan.Extensions.VK_EXT_vertex_input_dynamic_state as VkBind (
+  VertexInputBindingDescription2EXT(..))
+import Vulkan.Extensions.VK_EXT_vertex_input_dynamic_state as VkAttr (
+  VertexInputAttributeDescription2EXT(..))
 import qualified Vulkan.Zero as Vk
 
 import Control.Monad.State.Extra
@@ -86,7 +91,6 @@ import Graphics.Shaders.Internal.Expr
 import Graphics.Shaders.Internal.FragmentStream
 import Graphics.Shaders.Internal.Instance
 import Graphics.Shaders.Internal.PrimitiveArray
-import Graphics.Shaders.Internal.PrimitiveStream
 import Graphics.Shaders.Internal.Swapchain
 import Graphics.Shaders.Internal.Texture
 import Graphics.Shaders.Logger.Class
@@ -112,7 +116,7 @@ newtype PipelineBuilder t e a = PipelineBuilder {
 type PipelineBuilderState e = (
     Int, -- Next unique name
     Int, -- Next uniform binding number
-    -- Vertex binding mapped by unique name
+    -- Vertex bindings mapped by primitive stream name.
     Map Int (VertexBinding e),
     -- Uniform binding mapped by hashed StableName of the uniform's getter.
     Map Int (UniformBinding e),
@@ -121,11 +125,15 @@ type PipelineBuilderState e = (
   )
 
 data VertexBinding e = VertexBinding {
-  vertexAttributeDescriptions :: [VkPipeline.VertexInputAttributeDescription],
-  vertexBindingInputDescription :: [VkPipeline.VertexInputBindingDescription],
   vertexInputDeclarations :: ByteString,
   vertexPrimitiveArrayGetter :: PrimitiveArrayGetter e
 }
+
+tellVertexBinding :: VertexBinding e -> PipelineBuilder t e Int
+tellVertexBinding i = do
+  (n', _, _, _, _) <- PipelineBuilder . update $
+    \(n, ub, ins, ubs, sbs) -> (n + 1, ub, M.insert n i ins, ubs, sbs)
+  return n'
 
 data UniformBinding e = UniformBinding {
   uniformBindingNumber :: Int,
@@ -141,78 +149,45 @@ data SamplerBinding e = SamplerBinding {
   samplerTextureGetter :: e -> Texture
 }
 
-tellVertexInput :: VertexBinding e -> PipelineBuilder t e Int
-tellVertexInput i = do
-  (n', _, _, _, _) <- PipelineBuilder . update $
-    \(n, ub, ins, ubs, sbs) -> (n + 1, ub, M.insert n i ins, ubs, sbs)
-  return n'
+data BufferGetter e = forall a. BufferGetter (e -> Buffer a)
 
-data BufferGetter e = forall a r. BufferGetter (e -> Buffer r a)
-
-withBufferGetter :: BufferGetter e -> e -> (forall a r. Buffer r a -> r') -> r'
+withBufferGetter :: BufferGetter e -> e -> (forall a. Buffer a -> r) -> r
 withBufferGetter (BufferGetter getter) e f = f $ getter e
 
 data PrimitiveArrayGetter e =
-  forall a b t. PrimitiveArrayGetter (e -> PrimitiveArray t a b)
+  forall a t. PrimitiveArrayGetter (e -> PrimitiveArray t a)
 
 withPrimitiveArray :: PrimitiveArrayGetter e
   -> e
-  -> (forall t a b. PrimitiveArray t a b -> r)
+  -> (forall t a. PrimitiveArray t a -> r)
   -> r
 withPrimitiveArray (PrimitiveArrayGetter getter) e f = f $ getter e
 
-vertexBufferBindingNumber :: Num a => a
-vertexBufferBindingNumber = 0
 
-instanceBufferBindingNumber :: Num a => a
-instanceBufferBindingNumber = 1
+-- A stream of primitives indexed by primitive topology and its vertices, to be
+-- rasterized.
+data PrimitiveStream t a = PrimitiveStream {
+  primitiveStreamName :: Int,
+  primitiveStreamVertices :: a
+}
 
-toPrimitiveStream :: forall e t a b c. (BufferFormat a, BufferFormat b,
-    VertexInput c)
-  => (e -> PrimitiveArray t a b)
-  -> (a -> b -> c)
-  -> PipelineBuilder t e (PrimitiveStream t (VertexFormat c))
-toPrimitiveStream getPrimitiveArray f = do
-  let (vB, vBindDescr) =
-        makeVertexBinding @a vertexBufferBindingNumber
-          Vk.VERTEX_INPUT_RATE_VERTEX
+-- Transformations of vertices in a primitive stream are executed as shaders
+-- on the GPU.
+instance Functor (PrimitiveStream t) where
+  fmap f (PrimitiveStream n a) = PrimitiveStream n (f a)
 
-      (iB, iBindDescr) =
-        makeVertexBinding @b instanceBufferBindingNumber
-          Vk.VERTEX_INPUT_RATE_INSTANCE
+toPrimitiveStream
+  :: forall e t a. (VertexInput a)
+  => (e -> PrimitiveArray t a)
+  -> PipelineBuilder t e (PrimitiveStream t (VertexFormat a))
+toPrimitiveStream getPrimitiveArray = do
+  let ToVertex _ (Kleisli buildDeclM) = toVertex
+        :: ToVertex a (VertexFormat a)
+      (a, inputDecls) = flip runDeclM In . buildDeclM $ undefined
+      getter = PrimitiveArrayGetter getPrimitiveArray
 
-      ToVertex (Kleisli buildDescrs) (Kleisli buildInDecls) =
-        toVertex :: ToVertex c (VertexFormat c)
-      (aIn, inDecls) = runWriter . flip evalStateT 0 . flip runReaderT In
-                         . buildInDecls $ f vB iB
-      (_, inDescrs) = flip evalState 0 . runWriterT . buildDescrs . f vB $ iB
-
-      binding = VertexBinding inDescrs [vBindDescr, iBindDescr] inDecls
-        (PrimitiveArrayGetter getPrimitiveArray)
-
-  inName <- tellVertexInput binding
-  return $ PrimitiveStream inName aIn
- where
-  makeVertexBinding :: forall d. (BufferFormat d)
-    => Int
-    -> Vk.VertexInputRate
-    -> (d,
-        VkPipeline.VertexInputBindingDescription
-       )
-  makeVertexBinding binding inputRate =
-    let ToBuffer (Kleisli calcAlign) _ (Kleisli valueProd) vAlignMode _ =
-          toBuffer :: ToBuffer (HostFormat d) d
-        ((_, pads), stride) = flip runState 0 . runWriterT
-          . flip runReaderT vAlignMode . calcAlign $ undefined
-        b = flip evalState (pads, 0) . flip runReaderT binding . valueProd
-              $ undefined
-
-        bindDescrs = Vk.zero {
-          VkBinding.binding = fromIntegral binding,
-          VkBinding.inputRate = inputRate,
-          VkBinding.stride = fromIntegral stride
-        }
-    in (b, bindDescrs)
+  inName <- tellVertexBinding $ VertexBinding inputDecls getter
+  return $ PrimitiveStream inName a
 
 rasterize :: forall a e t. FragmentInput a
   => PrimitiveStream t (GLPos, a)
@@ -221,12 +196,12 @@ rasterize (PrimitiveStream inName (glPos, vOut)) = do
   let ToFragment (Kleisli buildOutput) =
         toFragment :: ToFragment a (FragmentFormat a)
 
-      ((_, vBody), vOutDecls) = runWriter . flip evalStateT 0
-        . flip runReaderT Out . flip runStateT (S (return "")) . buildOutput
+      ((_, vBody), vOutDecls) = flip runDeclM Out
+        . flip runStateT (S (return "")) . buildOutput
         $ vOut
 
-      ((fIn, _), fInDecls) = runWriter . flip evalStateT 0
-        . flip runReaderT In . flip runStateT (S (return "")) . buildOutput
+      ((fIn, _), fInDecls) = flip runDeclM In
+        . flip runStateT (S (return "")) . buildOutput
         $ vOut
 
   let raster = Rasterization inName vBody glPos vOutDecls fInDecls
@@ -253,10 +228,9 @@ compilePipeline pipeline = do
       VertexBinding{..} = inputs M.! inName
       vInDecls = vertexInputDeclarations
 
-  let uniformDescrSetLayoutBindings = fmap uniformDescrSetLayoutBinding uniforms
-      samplerDescrSetLayoutBindings = fmap samplerDescrSetLayoutBinding samplers
-      descrSetLayoutBindings = M.elems $
-        uniformDescrSetLayoutBindings <> samplerDescrSetLayoutBindings
+  let descrSetLayoutBindings = M.elems $
+        fmap uniformDescrSetLayoutBinding uniforms
+          <> fmap samplerDescrSetLayoutBinding samplers
 
   debug "Creating descriptor set layout."
   let descriptorSetLayoutInfo = Vk.zero {
@@ -363,6 +337,7 @@ compilePipeline pipeline = do
       VkPipeline.dynamicStates = V.fromList [
         VkPipeline.DYNAMIC_STATE_PRIMITIVE_TOPOLOGY,
         VkPipeline.DYNAMIC_STATE_SCISSOR,
+        VkPipeline.DYNAMIC_STATE_VERTEX_INPUT_EXT,
         VkPipeline.DYNAMIC_STATE_VIEWPORT
       ]
     },
@@ -380,12 +355,7 @@ compilePipeline pipeline = do
       VkPipeline.polygonMode = VkPipeline.POLYGON_MODE_FILL
     },
     VkPipeline.renderPass = renderPass,
-    VkPipeline.vertexInputState = Just . SomeStruct $ Vk.zero {
-      VkPipeline.vertexAttributeDescriptions = V.fromList
-        vertexAttributeDescriptions,
-      VkPipeline.vertexBindingDescriptions =
-        V.fromList vertexBindingInputDescription
-    },
+    VkPipeline.vertexInputState = Nothing, -- Dynamic input state
     VkPipeline.viewportState = Just . SomeStruct $ Vk.zero {
       VkPipeline.scissorCount = 1,
       VkPipeline.viewportCount = 1
@@ -468,8 +438,8 @@ createShader device stage code = do
 
     return compiledCode
 
--- A monad that brackets commands to be within the current frame's command
--- buffer.
+-- A monad that brackets all commands with begin/end using the current frame's
+-- command buffer.
 newtype Render m a = Render { unRender :: Codensity m a }
   deriving (Functor, Applicative, Monad, MonadIO, MonadTrans)
 
@@ -478,6 +448,8 @@ instance HasVulkanDevice m => HasVulkanDevice (Render m)
 instance HasSwapchain m => HasSwapchain (Render m)
 instance MonadLogger m => MonadLogger (Render m)
 
+-- Encapsulates a command buffer recording and queue submission.
+--
 -- TODO Make it so there's only one render per frame, since the queue
 -- submission here signals the fence that allows the swap.
 runRender :: (MonadIO m, HasVulkanDevice m, HasSwapchain m, MonadLogger m)
@@ -501,6 +473,25 @@ runRender (Render m) = do
   }
   queue <- getQueue
   VkQueue.queueSubmit queue submitInfos syncInFlightFence
+
+writeBuffer
+  :: (HasSwapchain m, MonadIO m)
+  => Buffer a
+  -> [HostFormat a]
+  -> Render m ()
+writeBuffer Buffer{..} as = do
+  (_, Frame{..}) <- getCurrentFrame
+  let commandBuffer = frameCommandBuffer
+
+  -- Put the vertices in the staging buffer to be copied to the front buffer
+  -- before draw commands are issued in the next frame.
+  liftIO . bufferWriter $ as
+
+  -- Transfer data in staging buffers to their writable buffer.
+  let copy = V.singleton $ VkCmd.BufferCopy Vk.zero Vk.zero
+               . fromIntegral $ bufferStride * bufferNumElems
+  VkCmd.cmdCopyBuffer commandBuffer bufferStagingBufferHandle
+    bufferHandle copy
 
 clearWindow :: (MonadIO m, HasSwapchain m) => Render m ()
 clearWindow = do
@@ -617,10 +608,11 @@ drawWindow :: forall m e. (MonadIO m, MonadLogger m, HasVulkanDevice m,
     HasSwapchain m)
   => e
   -> CompiledPipeline e
-  -> m ()
+  -> Render m ()
 drawWindow e CompiledPipeline{..} = do
   device <- getDevice
   (frameNumber, Frame{..}) <- getCurrentFrame
+  let commandBuffer = frameCommandBuffer
   (_, framebuffer) <- getCurrentSwapImage
 
   -- Update the current frame's descriptor set to point to the correct uniform
@@ -661,26 +653,10 @@ drawWindow e CompiledPipeline{..} = do
   VkDescr.updateDescriptorSets device descriptorWrites V.empty
 
   -- Record transfer and draw commands.
-  let commandBuffer = frameCommandBuffer
-
   flip runCodensity return $ do
     -- Use Codensity to bracket command buffer recording and render pass.
     extent <- getSwapchainExtent
     renderPass <- getRenderPass
-
-    -- Transfer data in staging buffers to their writable buffer.
-    forM_ compiledPipelineUniformInput $
-      \(_, getter) ->
-        withBufferGetter getter e (
-          (\case
-             BufferReadOnly{}   -> return ()
-             BufferWritable{..} -> do
-               let copy = V.singleton $ VkCmd.BufferCopy Vk.zero Vk.zero
-                     . fromIntegral $ wBufferStride * wBufferNumElems
-               VkCmd.cmdCopyBuffer commandBuffer wBufferStagingBufferHandle
-                 wBufferHandle copy
-          ) :: Buffer r a -> Codensity m ()
-        )
 
     -- Synchronise buffer copies with writes
     VkCmd.cmdPipelineBarrier commandBuffer Vk.PIPELINE_STAGE_TRANSFER_BIT
@@ -726,31 +702,66 @@ drawWindow e CompiledPipeline{..} = do
     withPrimitiveArray compiledPipelinePrimitiveArray e $ \pa ->
       forM_ (unPrimitiveArray pa) $ \PrimitiveArrayDrawCall{..} -> do
 
-        let vertexBuffer = primitiveArrayVertices
-            vertexStart = primitiveArrayStart
-            indexed = primitiveArrayIndexed
+        let indexed = primitiveArrayIndexed
             instances = primitiveArrayInstances
             topology = primitiveTopology primitiveArrayTopology
 
-        let (instanceBuffer, numInstances, instanceStart) = case instances of
-              Nothing              -> (Vk.zero, 1, 0)
-              Just (b, len, start) -> (b, fromIntegral len, fromIntegral start)
+        -- Set the vertex input state
+        let bindingDescrs =
+              flip fmap (zip [0..] primitiveArrayVertexBindingDescrs) $
+                \(binding, (_, inputRate, _, stride)) ->
+                  Vk.zero {
+                    VkBind.binding = binding,
+                    VkBind.inputRate = case inputRate of
+                      InputPerInstance -> Vk.VERTEX_INPUT_RATE_INSTANCE
+                      InputPerVertex   -> Vk.VERTEX_INPUT_RATE_VERTEX,
+                    VkBind.stride = fromIntegral stride,
+                    VkBind.divisor = 1
+                  }
 
-        VkCmd.cmdBindVertexBuffers commandBuffer 0
-          (V.fromList [ vertexBuffer, instanceBuffer ])
-          (V.fromList [ 0, 0 ])
+            attrDescrs =
+              flip fmap primitiveArrayVertexAttrDescrs $
+                \(binding, format, location, offset) ->
+                  Vk.zero {
+                    VkAttr.binding = fromIntegral binding,
+                    VkAttr.format = format,
+                    VkAttr.location = fromIntegral location,
+                    VkAttr.offset = fromIntegral offset
+                  }
 
+        VkVertexInput.cmdSetVertexInputEXT
+          commandBuffer
+          (V.fromList bindingDescrs)
+          (V.fromList attrDescrs)
+
+        -- Bind the buffers
+        let (numInstances, instanceStart) = case instances of
+              Nothing           -> (1, 0)
+              Just (len, start) -> (fromIntegral len, fromIntegral start)
+
+        let (buffers, ptrOffsets) =
+              unzip . flip fmap primitiveArrayVertexBindingDescrs $
+                \(buffer, _, ptrOffset, _) -> (buffer, fromIntegral ptrOffset)
+
+        VkCmd.cmdBindVertexBuffers
+          commandBuffer
+          0 -- First binding number
+          (V.fromList buffers)
+          (V.fromList ptrOffsets)
+
+        -- Set toplogy
         VkCmd.cmdSetPrimitiveTopology commandBuffer topology
 
+        -- Draw
         case indexed of
           Indexed IndexArray{..} -> do
             VkCmd.cmdBindIndexBuffer commandBuffer indexArrayBufferHandle
               0 indexArrayType
             VkCmd.cmdDrawIndexed commandBuffer (fromIntegral indexArrayLength)
               numInstances (fromIntegral indexArrayStart)
-              (fromIntegral vertexStart) instanceStart
+              (fromIntegral primitiveArrayVertexStart) instanceStart
           Unindexed numVertices ->
             VkCmd.cmdDraw commandBuffer (fromIntegral numVertices) numInstances
-              (fromIntegral vertexStart) instanceStart
+              (fromIntegral primitiveArrayVertexStart) instanceStart
 
   return ()

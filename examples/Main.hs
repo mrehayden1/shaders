@@ -33,15 +33,12 @@ appLoggingLevel = LogTrace
 --appLoggingLevel = LogError
 --appLoggingLevel = LogNone
 
-type Vertex = (B4 Float, B4 Float, B2 Float)
-type Instance =  V4 (B4 Float)
+type Vertex = (B4 Float, B2 Float, V4 (B4 Float))
 
-data ShaderEnv = ShaderEnv {
-  envColor :: Buffer 'ReadOnly (Uniform (B4 Float)),
-  envMatrix :: Buffer 'ReadWrite (Uniform (V4 (B4 Float))),
-  envOpacity :: Buffer 'ReadOnly (Uniform (B Float)),
-  envTexture :: Texture,
-  envVertices :: PrimitiveArray Triangles Vertex Instance
+data Input = Input {
+  inputMatrix :: Buffer (Uniform (V4 (B4 Float))),
+  inputTexture :: Texture,
+  inputVertices :: PrimitiveArray Triangles Vertex
 }
 
 main :: IO ()
@@ -57,24 +54,14 @@ main = do
 
 app :: MonadShaders m => ShadersT m ()
 app = do
-  let triangleVertices = [
-          (V2   0.0  (-0.5), V4 1.0 0.0 0.0 1),
-          (V2 (-0.5)   0.5 , V4 0.0 0.0 1.0 1),
-          (V2   0.5    0.5 , V4 0.0 1.0 0.0 1)
-        ]
-
-  triangleBuffer :: Buffer 'ReadOnly (V2 (B Float), V4 (B Float)) <-
-    createBufferReadOnly triangleVertices
-  let triangleVertexArray = toVertexArray triangleBuffer
-      trianglePrimitives = toPrimitiveArray TriangleList triangleVertexArray
-
   let quadVertices = [
-          (V4 (-1) (-1) 0 1, V4 1.0 0.0 0.0 1, V2 0 0),
-          (V4 (-1)   1  0 1, V4 1.0 1.0 1.0 1, V2 0 1),
-          (V4   1  (-1) 0 1, V4 0.0 0.0 1.0 1, V2 1 0),
-          (V4   1    1  0 1, V4 0.0 1.0 0.0 1, V2 1 1)
+          (V4 (-1) (-1) 0 1, V2 0 0),
+          (V4 (-1)   1  0 1, V2 0 1),
+          (V4   1  (-1) 0 1, V2 1 0),
+          (V4   1    1  0 1, V2 1 1)
         ]
-  quadVertexArray <- toVertexArray <$> createBufferReadOnly quadVertices
+  quadBuffer <- createBuffer (length quadVertices)
+  let quadVertexArray = toVertexArray quadBuffer
 
   let n = 10 :: Int
   let quadInstances = [0..(n^2 - 1)] <&> \x ->
@@ -84,51 +71,32 @@ app = do
             tz = 0
             s  = 0.75 / fromIntegral n
         in V4 (V4 s 0 0 tx) (V4 0 s 0 ty) (V4 0 0 s tz) (V4 0 0 0 1)
-  quadInstanceVertexArray <-
-    toVertexArray <$> createBufferReadOnly quadInstances
+  quadInstanceBuffer <- createBuffer (length quadInstances)
+  let quadInstanceVertexArray = toVertexArray quadInstanceBuffer
 
-  {-
-  let quadIndices = [ 0, 1, 2, 1, 3, 2 ] :: [Word32]
-  quadIndexBuffer :: Buffer (B Word32) <- createBuffer quadIndices
-  let quadIndexArray = toIndexArray quadIndexBuffer
-
-      quadPrimitives = toPrimitiveArrayIndexedInstanced TriangleList
-        quadIndexArray quadVertexArray quadInstanceVertexArray
-  -}
-  let quadPrimitives = toPrimitiveArrayInstanced TriangleStrip
-        quadVertexArray quadInstanceVertexArray
-
-  let baseColorData = [
-          V4 1 1 1 1
-        ]
-
-      opacityData = [ 1 ]
+  let quadPrimitives = toPrimitiveArrayInstanced TriangleStrip quadVertexArray
+          quadInstanceVertexArray
+        $ \(pos, uv) tm -> (pos, uv, tm)
 
   matrixBuffer <- createBuffer 1
 
-  shaderEnv <- ShaderEnv
-    <$> createBufferReadOnly baseColorData
-    <*> pure matrixBuffer
-    <*> createBufferReadOnly opacityData
-    <*> loadTexture "examples/texture-alpha.tga"
+  input <- Input matrixBuffer
+    <$> loadTexture "examples/texture-alpha.tga"
     <*> pure quadPrimitives
 
   pipeline <- compilePipeline $ do
-    vertices <- toPrimitiveStream envVertices $ \(pos, color, uv) tm ->
-      (pos, color, uv, tm)
+    vertices <- toPrimitiveStream inputVertices
 
-    red :: V4 (S V Float) <- getUniform envColor
-    matrix :: M44 (S V Float) <- getUniform envMatrix
-    opacity :: S F Float <- getUniform envOpacity
+    matrix :: M44 (S V Float) <- getUniform inputMatrix
 
-    sampler <- getSampler envTexture
+    sampler <- getSampler inputTexture
 
-    let vertices' = vertices <&> \(p, baseColor, uv, tm) ->
+    let vertices' = vertices <&> \(p, uv, tm) ->
           let glPos = tm !*! matrix !* p
-          in (glPos, (uv, baseColor))
+          in (glPos, uv)
     fragments <- rasterize vertices'
-    return $ fragments <&> \(uv, baseColor) ->
-      sample sampler uv * baseColor
+    return $ fragments <&> \uv ->
+      sample sampler uv
 
   liftIO $ putStrLn "Finished startup."
   liftIO $ putStrLn "Running..."
@@ -136,6 +104,11 @@ app = do
   startTime <- liftIO getCurrentTime
 
   frameStartTimeRef <- liftIO $ newIORef startTime
+
+  -- Initialise buffers
+  runRender $ do
+    writeBuffer quadBuffer quadVertices
+    writeBuffer quadInstanceBuffer quadInstances
 
   fix $ \loop -> do
     frameStartTime <- liftIO $ readIORef frameStartTimeRef
@@ -150,11 +123,11 @@ app = do
               (V4 0   0   1   0  )
               (V4 0   0   0   1  )
           ]
-    writeBuffer matrixBuffer matrixData
 
     runRender $ do
+      writeBuffer matrixBuffer matrixData
       clearWindow
-      drawWindow shaderEnv pipeline
+      drawWindow input pipeline
 
     swap
 

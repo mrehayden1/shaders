@@ -28,7 +28,7 @@ import qualified Vulkan.Core10.Pass as VkPass hiding (
   FramebufferCreateInfo(..))
 import qualified Vulkan.Core10.Queue as VkQueue
 import Vulkan.CStruct.Extends
-import Vulkan.Extensions.VK_KHR_swapchain as VkSwapchain
+import Vulkan.Extensions.VK_EXT_vertex_input_dynamic_state as VkState
 import Vulkan.Extensions.VK_KHR_surface as VkSurface
 import Vulkan.Zero as Vk
 
@@ -103,9 +103,6 @@ runDeviceReaderT :: DeviceReaderT m a -> Device -> m a
 runDeviceReaderT (DeviceReaderT m) = runReaderT m
 
 
-requiredDeviceExtensions :: [ByteString]
-requiredDeviceExtensions = [VkSwapchain.KHR_SWAPCHAIN_EXTENSION_NAME]
-
 createDevice :: (MonadAsyncException m, MonadLogger m, MonadResource m,
     HasWindow m, HasVulkan m)
   => VkSurface.SurfaceKHR
@@ -115,7 +112,7 @@ createDevice surface = do
   allocator <- getVulkanAllocator
 
   debug "Creating logical device..."
-  devices <- getSuitableDevices vkInstance surface requiredDeviceExtensions
+  devices <- getSuitableDevices vkInstance surface
 
   when (null devices) $ do
     let msg = "No suitable physical device found"
@@ -135,9 +132,13 @@ createDevice surface = do
           physicalDeviceQueueFamilyIndex
           (V.singleton 1)
 
+      deviceCreateNext = (
+          PhysicalDeviceVertexInputDynamicStateFeaturesEXT True,
+          ()
+        )
       deviceCreateInfo =
         VkDevice.DeviceCreateInfo
-          ()
+          deviceCreateNext
           Vk.zero
           queueCreateInfo
           V.empty

@@ -22,7 +22,7 @@ type GLPos = V4 (S V Float)
 
 data FragmentStream a =
   FragmentStream
-    a             -- Usually an S F x, our fragments.
+    a             -- Our fragments
     Rasterization -- Rasterization
 
 instance Functor FragmentStream where

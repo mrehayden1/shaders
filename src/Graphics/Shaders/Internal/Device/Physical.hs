@@ -2,6 +2,8 @@ module Graphics.Shaders.Internal.Device.Physical (
   PhysicalDevice(..),
   SwapchainSettings(..),
 
+  requiredDeviceExtensions,
+
   deviceColorImageFormat,
   deviceDepthImageFormat,
 
@@ -23,18 +25,28 @@ import qualified Data.Vector as V
 import Data.Word
 import Text.Printf
 import qualified Vulkan.Core10.DeviceInitialization as VkDevice
+import qualified Vulkan.Core11.Promoted_From_VK_KHR_get_physical_device_properties2 as VkDevice
 import qualified Vulkan.Core10.Enums as Vk
 import qualified Vulkan.Core10.ExtensionDiscovery as VkExtension
 import Vulkan.Core10.FundamentalTypes (Extent2D(Extent2D))
 import qualified Vulkan.Core10.FundamentalTypes as VkExtent2D (Extent2D(..))
 import qualified Vulkan.Core10.Handles as Vk
+import Vulkan.CStruct.Extends
+import Vulkan.Extensions.VK_EXT_vertex_input_dynamic_state as VkState
 import qualified Vulkan.Extensions.VK_KHR_surface as VkSurface
+import Vulkan.Extensions.VK_KHR_swapchain as VkSwapchain
 import Witherable
 
 import Control.Monad.Trans.Maybe.Extra
 import Data.Bits.Extra
 import Graphics.Shaders.Internal.Window
 import Graphics.Shaders.Logger.Class
+
+requiredDeviceExtensions :: [ByteString]
+requiredDeviceExtensions = [
+    VkSwapchain.KHR_SWAPCHAIN_EXTENSION_NAME,
+    VkState.EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME
+  ]
 
 deviceColorImageFormat :: Vk.Format
 deviceColorImageFormat = Vk.FORMAT_B8G8R8A8_SRGB
@@ -93,70 +105,84 @@ data SwapchainSettings = SwapchainSettings {
 getSuitableDevices :: (MonadIO m, MonadLogger m, HasWindow m)
   => Vk.Instance
   -> VkSurface.SurfaceKHR
-  -> [ByteString]
   -> m [PhysicalDevice]
-getSuitableDevices vkInstance surface requiredExtensions = do
+getSuitableDevices vkInstance surface = do
   (_, devices) <- VkDevice.enumeratePhysicalDevices vkInstance
   debug . printf "%d devices found." . V.length $ devices
 
-  devices' <- flip iwither devices $ \i device -> runMaybeT $ do
-    properties <- VkDevice.getPhysicalDeviceProperties device
-
-    let deviceName = UTF8.toString . VkDevice.deviceName $ properties
-    debug . printf "Checking device %d: %s." i $ deviceName
-
-    -- Check this device for required extension support and skip it if there
-    -- are any that are unsupported.
-    debug "Checking device extensions."
-    (result, extensions) <-
-      VkExtension.enumerateDeviceExtensionProperties device Nothing
-    when (result == Vk.INCOMPLETE) $
-      warn "Vulkan API returned incomplete device extension list."
-    let unsupportedExtensions = (requiredExtensions \\) . V.toList
-          . fmap VkExtension.extensionName $ extensions
-    unless (null unsupportedExtensions) $ do
-      let errStr = printf "Missing required extensions: %s." . intercalate ", "
-            . fmap UTF8.toString $ unsupportedExtensions
-      err errStr
-      fail errStr
-    debug "Found required extensions."
-
-    -- Find the first queue family that supports everything we need, skipping
-    -- the device if we can't find one.
-    debug "Finding compatible device queue family."
-    queueFamilyProperties <-
-      VkDevice.getPhysicalDeviceQueueFamilyProperties device
-    queueFamilyIndex <-
-      tryFindSuitableQueueFamilyIndex surface device queueFamilyProperties
-    debug . printf "Chosen queue family %d." $ queueFamilyIndex
-
-    -- Try to get the required surface capabilities, formats, present modes.
-    swapchainSupport <- tryGetSwapchainSupport device surface
-    logTrace "Dumping device swap chain support."
-    logTrace . show $ swapchainSupport
-
-    -- Try to get the required depth format.
-    depthFormat <- tryGetDepthFormat device
-    debug . printf "Chosen depth format %s." . show $ depthFormat
-
-    -- Get the device memory properties
-    memoryProperties <- VkDevice.getPhysicalDeviceMemoryProperties device
-    logTrace "Dumping device memory properties."
-    logTrace . show $ memoryProperties
-
-    let physicalDevice = PhysicalDevice {
-          physicalDeviceHandle = device,
-          physicalDeviceMemoryProperties = memoryProperties,
-          physicalDeviceProperties = properties,
-          physicalDeviceQueueFamilyIndex = queueFamilyIndex,
-          physicalDeviceSwapchainSettings = swapchainSupport
-        }
-
-    return physicalDevice
+  -- Check each device for required extensions and features, skipping it if
+  -- there are any unsupported or missing, and then return the device's
+  -- properties.
+  devices' <- wither (getPhysicalDeviceProperties surface) devices
 
   -- Finally sort all the device by a suitability score and pick the best.
   return . sortBy (compare `on` Down . scoreSuitability) . V.toList
     $ devices'
+
+getPhysicalDeviceProperties :: (MonadIO m, MonadLogger m, HasWindow m)
+  => VkSurface.SurfaceKHR
+  -> Vk.PhysicalDevice
+  -> m (Maybe PhysicalDevice)
+getPhysicalDeviceProperties surface device = runMaybeT $ do
+  properties <- VkDevice.getPhysicalDeviceProperties device
+  features <- VkDevice.getPhysicalDeviceFeatures2 device
+
+  let deviceName = UTF8.toString . VkDevice.deviceName $ properties
+  debug . printf "Checking device %s." $ deviceName
+
+  debug "Checking device extensions."
+  (result, extensions) <-
+    VkExtension.enumerateDeviceExtensionProperties device Nothing
+  when (result == Vk.INCOMPLETE) $
+    warn "Vulkan API returned incomplete device extension list."
+  let unsupportedExtensions = (requiredDeviceExtensions \\) . V.toList
+        . fmap VkExtension.extensionName $ extensions
+  unless (null unsupportedExtensions) $ do
+    let errStr = printf "Missing required extensions: %s." . intercalate ", "
+          . fmap UTF8.toString $ unsupportedExtensions
+    err errStr
+    fail errStr
+  debug "Found required extensions."
+
+  debug "Checking device features."
+  let _ ::& PhysicalDeviceVertexInputDynamicStateFeaturesEXT vertexInputDynamicState
+        :& ()
+        = features
+  unless vertexInputDynamicState $ do
+    let errStr = "Missing dynamic pipeline vertex input state."
+    err errStr
+    fail errStr
+
+  -- Find the first queue family that supports everything we need, skipping
+  -- the device if we can't find one.
+  debug "Finding compatible device queue family."
+  queueFamilyProperties <-
+    VkDevice.getPhysicalDeviceQueueFamilyProperties device
+  queueFamilyIndex <-
+    tryFindSuitableQueueFamilyIndex surface device queueFamilyProperties
+  debug . printf "Chosen queue family %d." $ queueFamilyIndex
+
+  -- Try to get the required surface capabilities, formats, present modes.
+  swapchainSupport <- tryGetSwapchainSupport device surface
+  logTrace "Dumping device swap chain support."
+  logTrace . show $ swapchainSupport
+
+  -- Try to get the required depth format.
+  depthFormat <- tryGetDepthFormat device
+  debug . printf "Chosen depth format %s." . show $ depthFormat
+
+  -- Get the device memory properties
+  memoryProperties <- VkDevice.getPhysicalDeviceMemoryProperties device
+  logTrace "Dumping device memory properties."
+  logTrace . show $ memoryProperties
+
+  return PhysicalDevice {
+      physicalDeviceHandle = device,
+      physicalDeviceMemoryProperties = memoryProperties,
+      physicalDeviceProperties = properties,
+      physicalDeviceQueueFamilyIndex = queueFamilyIndex,
+      physicalDeviceSwapchainSettings = swapchainSupport
+    }
 
 scoreSuitability :: PhysicalDevice -> Int
 scoreSuitability device =

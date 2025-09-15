@@ -2,6 +2,8 @@ module Graphics.Shaders.Internal.DeclM (
   DeclM,
   InOut(..),
 
+  runDeclM,
+
   tellDecl
 ) where
 
@@ -13,9 +15,16 @@ import qualified Data.ByteString.Char8 as BS
 
 import Control.Monad.State.Extra
 
-type DeclM = ReaderT InOut (StateT Int (Writer ByteString))
+-- A monad for creating GLSL shader input/output declarations
+newtype DeclM a = DeclM {
+  unDeclM :: ReaderT InOut (StateT Int (Writer ByteString)) a
+} deriving (Functor, Applicative, Monad, MonadState Int, MonadReader InOut,
+    MonadWriter ByteString)
 
 data InOut = In | Out
+
+runDeclM :: DeclM a -> InOut -> (a, ByteString)
+runDeclM m i = runWriter . flip evalStateT 0 . flip runReaderT i . unDeclM $ m
 
 tellDecl :: ByteString -> DeclM ByteString
 tellDecl typ = do

@@ -1,9 +1,9 @@
 module Graphics.Shaders.PrimitiveArray (
   VertexArray,
-  vertexArrayLength,
 
   dropVertices,
   takeVertices,
+  zipVertices,
 
   toVertexArray,
 

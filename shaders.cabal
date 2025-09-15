@@ -47,7 +47,6 @@ library
       Graphics.Shaders.Internal.Memory
       Graphics.Shaders.Internal.Pipeline
       Graphics.Shaders.Internal.PrimitiveArray
-      Graphics.Shaders.Internal.PrimitiveStream
       Graphics.Shaders.Internal.Sampler
       Graphics.Shaders.Internal.Swapchain
       Graphics.Shaders.Internal.Texture
@@ -58,7 +57,6 @@ library
       Graphics.Shaders.Orphans
       Graphics.Shaders.Pipeline
       Graphics.Shaders.PrimitiveArray
-      Graphics.Shaders.PrimitiveStream
       Graphics.Shaders.Sampler
       Graphics.Shaders.Texture
       Graphics.Shaders.Texture.Loader.TGA
