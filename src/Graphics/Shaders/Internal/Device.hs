@@ -212,7 +212,7 @@ createRenderPass allocator device SwapchainSettings{..} = do
         ],
         VkPass.depthStencilAttachment = Just $ Vk.zero {
           VkPass.attachment = 1,
-          VkPass.layout = Vk.IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL
+          VkPass.layout = Vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
         },
         VkPass.pipelineBindPoint = Vk.PIPELINE_BIND_POINT_GRAPHICS
       }
