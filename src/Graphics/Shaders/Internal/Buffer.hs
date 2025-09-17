@@ -374,9 +374,11 @@ newtype BIndex a = BIndex (B a)
 instance BufferFormat (BIndex Word16) where
   type HostFormat (BIndex Word16) = Word16
   toBuffer =
-    let ToBuffer offset buffer value _ usage
+    let ToBuffer offset buffer value _ _
           = toBufferUnaligned :: ToBuffer Word16 (B Word16)
-    in ToBuffer offset buffer value AlignIndices usage >>> arr BIndex
+        align = AlignIndices
+        usage = VkBuffer.BUFFER_USAGE_INDEX_BUFFER_BIT
+    in ToBuffer offset buffer value align usage >>> arr BIndex
 
 
 instance BufferFormat (V0 a) where
