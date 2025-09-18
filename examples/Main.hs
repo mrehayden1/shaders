@@ -14,11 +14,13 @@ import Graphics.Shaders
 import Graphics.Shaders.Buffer
 import Graphics.Shaders.Logger
 import Graphics.Shaders.Pipeline
+import Graphics.Shaders.Render
 import Graphics.Shaders.Sampler
 import Graphics.Shaders.Texture
+import Graphics.Shaders.Texture.Loader.TGA
+import Graphics.Shaders.Transfer
 import Graphics.Shaders.Uniform
 import Graphics.Shaders.Window
-
 
 appName :: String
 appName = "Shaders Example"
@@ -91,9 +93,17 @@ app = do
 
   matrixBuffer <- createBuffer 1
 
-  input <- Input matrixBuffer
-    <$> loadTexture "examples/texture-alpha.tga"
-    <*> pure quadPrimitives
+  TGA{..} <- decodeFile "examples/texture-alpha.tga"
+  texture <- createTexture tgaWidth tgaHeight
+
+  runTransfer $ do
+    transferTexture texture tgaData tgaWidth tgaHeight
+
+  let input = Input {
+      inputMatrix = matrixBuffer,
+      inputTexture = texture,
+      inputVertices = quadPrimitives
+    }
 
   pipeline <- compilePipeline $ do
     vertices <- toPrimitiveStream inputVertices
@@ -117,7 +127,7 @@ app = do
   frameStartTimeRef <- liftIO $ newIORef startTime
 
   -- Initialise buffers
-  runRender $ do
+  renderFrame $ do
     writeBuffer quadBuffer quadVertices
     writeBuffer quadIndexBuffer quadIndices
     writeBuffer quadInstanceBuffer quadInstances
@@ -127,21 +137,19 @@ app = do
     let simTime = realToFrac . diffUTCTime frameStartTime
                     $ startTime :: Float
 
-    let sX = min 1 $ simTime * 0.1
+    let s = min 1 $ simTime * 0.1
         matrixData = [
             V4
-              (V4 sX  0   0   0  )
-              (V4 0   1   0   0  )
+              (V4 s   0   0   0  )
+              (V4 0   s   0   0  )
               (V4 0   0   1   0  )
               (V4 0   0   0   1  )
           ]
 
-    runRender $ do
+    renderFrame $ do
       writeBuffer matrixBuffer matrixData
       clearWindow
       drawWindow input pipeline
-
-    swap
 
     logTrace "Polling window events"
     windowEvents <- pollWindowEvents
@@ -161,4 +169,4 @@ app = do
 
   liftIO $ putStrLn "Exiting..."
   debug "Awaiting graphics idle."
-  awaitIdle
+  awaitDeviceIdle

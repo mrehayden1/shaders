@@ -35,7 +35,6 @@ library
       Graphics.Shaders.Expr
       Graphics.Shaders.FragmentStream
       Graphics.Shaders.Internal.Buffer
-      Graphics.Shaders.Internal.Command
       Graphics.Shaders.Internal.DeclM
       Graphics.Shaders.Internal.Device
       Graphics.Shaders.Internal.Device.Physical
@@ -50,6 +49,7 @@ library
       Graphics.Shaders.Internal.Sampler
       Graphics.Shaders.Internal.Swapchain
       Graphics.Shaders.Internal.Texture
+      Graphics.Shaders.Internal.Transfer
       Graphics.Shaders.Internal.Window
       Graphics.Shaders.Logger
       Graphics.Shaders.Logger.Base
@@ -57,9 +57,11 @@ library
       Graphics.Shaders.Orphans
       Graphics.Shaders.Pipeline
       Graphics.Shaders.PrimitiveArray
+      Graphics.Shaders.Render
       Graphics.Shaders.Sampler
       Graphics.Shaders.Texture
       Graphics.Shaders.Texture.Loader.TGA
+      Graphics.Shaders.Transfer
       Graphics.Shaders.Uniform
       Graphics.Shaders.Window
   other-modules:
@@ -85,6 +87,7 @@ library
       RecordWildCards
       ScopedTypeVariables
       StandaloneDeriving
+      TupleSections
       TypeApplications
       TypeFamilies
       UndecidableInstances
@@ -98,10 +101,10 @@ library
     , data-default
     , exception-transformers
     , hashtables
-    , kan-extensions
     , language-spir-v
     , lens
     , linear
+    , list-t
     , mtl
     , resourcet
     , shaderc
@@ -138,6 +141,7 @@ executable example
       RecordWildCards
       ScopedTypeVariables
       StandaloneDeriving
+      TupleSections
       TypeApplications
       TypeFamilies
       UndecidableInstances

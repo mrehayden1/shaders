@@ -29,6 +29,7 @@ default-extensions:
 - RecordWildCards
 - ScopedTypeVariables
 - StandaloneDeriving
+- TupleSections
 - TypeApplications
 - TypeFamilies
 - UndecidableInstances
@@ -66,10 +67,10 @@ library:
   - data-default
   - exception-transformers
   - hashtables
-  - kan-extensions
   - language-spir-v
   - lens
   - linear
+  - list-t
   - mtl
   - resourcet
   - shaderc

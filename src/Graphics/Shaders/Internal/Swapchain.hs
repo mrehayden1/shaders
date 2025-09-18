@@ -12,9 +12,9 @@ module Graphics.Shaders.Internal.Swapchain (
 ) where
 
 import Control.Monad
-import Control.Monad.Codensity
 import Control.Monad.Exception
 import Control.Monad.State
+import Control.Monad.Trans.Cont
 import Control.Monad.Trans.Resource
 import Data.Bits
 import Data.Vector (Vector)
@@ -73,8 +73,8 @@ class Monad m => HasSwapchain m where
     => m ()
   swap = lift swap
 
-instance HasSwapchain m => HasSwapchain (Codensity m)
 
+instance HasSwapchain m => HasSwapchain (ContT r m)
 
 newtype SwapchainStateT m a = SwapchainStateT {
   unSwapchainStateT :: StateT SwapchainState m a

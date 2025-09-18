@@ -10,14 +10,6 @@ module Graphics.Shaders.Pipeline (
 
   compilePipeline,
 
-  Render,
-  runRender,
-
-  writeBuffer,
-
-  drawWindow,
-  clearWindow,
-
   toPrimitiveStream,
   rasterize
 ) where

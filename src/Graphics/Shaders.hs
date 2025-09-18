@@ -4,8 +4,7 @@ module Graphics.Shaders (
   ShadersT,
   runShadersT,
 
-  awaitIdle,
-  swap
+  awaitDeviceIdle
 ) where
 
 import Graphics.Shaders.Base

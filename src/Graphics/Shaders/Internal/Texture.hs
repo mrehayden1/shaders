@@ -1,15 +1,13 @@
 module Graphics.Shaders.Internal.Texture (
-  loadTexture,
-  Texture(..)
+  Texture(..),
+
+  createTexture,
+  destroyTexture
 ) where
 
 import Control.Monad.Exception
-import Control.Monad.IO.Class
 import Control.Monad.Trans.Resource
 import Data.Bits
-import Data.ByteString.Internal as BS
-import Foreign.ForeignPtr
-import Foreign.Marshal
 import Foreign.Ptr
 import Vulkan.Core10.Buffer as VkBuffer
 import Vulkan.Core10.Enums as Vk
@@ -23,31 +21,33 @@ import Graphics.Shaders.Internal.Device
 import Graphics.Shaders.Internal.Image
 import Graphics.Shaders.Internal.Instance
 import Graphics.Shaders.Logger.Class
-import Graphics.Shaders.Texture.Loader.TGA
 
 data Texture = Texture {
+  textureImage :: Vk.Image,
   textureImageView :: Vk.ImageView,
-  textureReleaseKeys :: (ReleaseKey, ReleaseKey, ReleaseKey, ReleaseKey),
-  textureSampler :: Vk.Sampler
+  textureReleaseKeys :: (ReleaseKey, ReleaseKey, ReleaseKey, ReleaseKey,
+    ReleaseKey, ReleaseKey),
+  textureSampler :: Vk.Sampler,
+  textureStagingBufferHandle :: Vk.Buffer,
+  textureStagingBufferPtr :: Ptr ()
 }
 
-loadTexture :: (MonadAsyncException m, MonadLogger m, MonadResource m,
-    HasVulkan m, HasVulkanDevice m)
-  => FilePath
+createTexture
+  :: (MonadAsyncException m, MonadLogger m, MonadResource m, HasVulkan m,
+      HasVulkanDevice m)
+  => Word
+  -> Word
   -> m Texture
-loadTexture fileName = do
+createTexture width height = do
   allocator <- getVulkanAllocator
   device <- getDevice
 
-  debug "Loading texture image."
-  TGA{..} <- decodeFile fileName
-  let BS.BS imageBytes imageNumBytes = tgaData
-      bufferSize = fromIntegral imageNumBytes
+  let bufferSize = fromIntegral $ width * height * 4
 
   debug "Creating image."
   (image, imageReleaseKey, _, memoryReleaseKey) <- createImage
-    tgaWidth
-    tgaHeight
+    width
+    height
     Vk.FORMAT_R8G8B8A8_SRGB
     Vk.IMAGE_TILING_OPTIMAL
     (Vk.IMAGE_USAGE_TRANSFER_DST_BIT .|. Vk.IMAGE_USAGE_SAMPLED_BIT)
@@ -61,28 +61,10 @@ loadTexture fileName = do
   let stagingBufferUsageFlags = VkBuffer.BUFFER_USAGE_TRANSFER_SRC_BIT
       stagingMemoryPropertyFlags = Vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT
         .|. Vk.MEMORY_PROPERTY_HOST_COHERENT_BIT
-  (buffer, bufferReleaseKey, bufferMemory, bufferMemoryReleaseKey)
-    <- createVkBuffer bufferSize stagingBufferUsageFlags
-         stagingMemoryPropertyFlags
-
-  -- Fill the buffer
-  debug "Filling staging buffer."
-  bufferPtr <- VkMemory.mapMemory device bufferMemory 0 bufferSize
-    Vk.zero
-  liftIO . withForeignPtr imageBytes $ \ptr ->
-    copyBytes (castPtr bufferPtr) ptr imageNumBytes
-  VkMemory.unmapMemory device bufferMemory
-
-  debug "Copying image."
-  transitionImageLayout image Vk.IMAGE_LAYOUT_UNDEFINED
-    Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
-  copyBufferToImage buffer image tgaWidth tgaHeight
-  transitionImageLayout image Vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
-    Vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-
-  debug "Destryoing staging buffer."
-  release bufferMemoryReleaseKey
-  release bufferReleaseKey
+  (buffer, bufferReleaseKey, bufferMemory, bufferMemoryReleaseKey) <-
+    createVkBuffer bufferSize stagingBufferUsageFlags
+      stagingMemoryPropertyFlags
+  bufferPtr <- VkMemory.mapMemory device bufferMemory 0 bufferSize Vk.zero
 
   let samplerInfo = Vk.zero {
     VkSampler.magFilter = Vk.FILTER_LINEAR,
@@ -96,6 +78,26 @@ loadTexture fileName = do
     (\s -> VkSampler.destroySampler device s allocator)
 
   let releaseKeys = (imageReleaseKey, memoryReleaseKey, imageViewReleaseKey,
-        samplerReleaseKey)
+        samplerReleaseKey, bufferMemoryReleaseKey, bufferReleaseKey)
 
-  return $ Texture imageView releaseKeys sampler
+  return $ Texture {
+      textureImage = image,
+      textureImageView = imageView,
+      textureReleaseKeys = releaseKeys,
+      textureSampler = sampler,
+      textureStagingBufferHandle = buffer,
+      textureStagingBufferPtr = bufferPtr
+    }
+
+destroyTexture :: MonadResource m => Texture -> m ()
+destroyTexture Texture{..} = do
+  let (imageReleaseKey, memoryReleaseKey, imageViewReleaseKey,
+       samplerReleaseKey, bufferMemoryReleaseKey, bufferReleaseKey)
+        = textureReleaseKeys
+
+  release imageReleaseKey
+  release memoryReleaseKey
+  release imageViewReleaseKey
+  release samplerReleaseKey
+  release bufferMemoryReleaseKey
+  release bufferReleaseKey

@@ -12,17 +12,20 @@ module Graphics.Shaders.Internal.Device.Physical (
 
 import Control.Monad
 import Control.Monad.IO.Class
-import Control.Monad.Trans
+import Control.Monad.State
 import Control.Monad.Trans.Maybe
 import Data.Bits
 import Data.ByteString.UTF8 as UTF8
 import Data.Function
 import Data.List ((\\), intercalate, sortBy)
-import Data.Maybe
+import Data.Map (Map)
+import qualified Data.Map as M
 import Data.Ord
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word
+import ListT (ListT)
+import qualified ListT
 import Text.Printf
 import qualified Vulkan.Core10.DeviceInitialization as VkDevice
 import qualified Vulkan.Core11.Promoted_From_VK_KHR_get_physical_device_properties2 as VkDevice
@@ -35,12 +38,13 @@ import Vulkan.CStruct.Extends
 import Vulkan.Extensions.VK_EXT_vertex_input_dynamic_state as VkState
 import qualified Vulkan.Extensions.VK_KHR_surface as VkSurface
 import Vulkan.Extensions.VK_KHR_swapchain as VkSwapchain
-import Witherable
+import Witherable as W
 
 import Control.Monad.Trans.Maybe.Extra
 import Data.Bits.Extra
 import Graphics.Shaders.Internal.Window
 import Graphics.Shaders.Logger.Class
+
 
 requiredDeviceExtensions :: [ByteString]
 requiredDeviceExtensions = [
@@ -56,11 +60,15 @@ deviceDepthImageFormat = Vk.FORMAT_D32_SFLOAT
 
 -- A graphics enabled physical device, such as a GPU or CPU.
 data PhysicalDevice = PhysicalDevice {
+    -- Queue family index and queue index
+    physicalDeviceGraphicsQueue :: (Word32, Word32),
     physicalDeviceHandle :: Vk.PhysicalDevice,
     physicalDeviceMemoryProperties :: VkDevice.PhysicalDeviceMemoryProperties,
     physicalDeviceProperties :: VkDevice.PhysicalDeviceProperties,
-    physicalDeviceQueueFamilyIndex :: Word32,
-    physicalDeviceSwapchainSettings :: SwapchainSettings
+    -- Queue family queue counts indexed by queue family device index.
+    physicalDeviceQueueFamilies :: Map Word32 Int,
+    physicalDeviceSwapchainSettings :: SwapchainSettings,
+    physicalDeviceTransferQueue :: (Word32, Word32)
   } deriving (Show)
 
 -- A physical device's swap chain settings
@@ -153,14 +161,14 @@ getPhysicalDeviceProperties surface device = runMaybeT $ do
     err errStr
     fail errStr
 
-  -- Find the first queue family that supports everything we need, skipping
-  -- the device if we can't find one.
-  debug "Finding compatible device queue family."
-  queueFamilyProperties <-
-    VkDevice.getPhysicalDeviceQueueFamilyProperties device
-  queueFamilyIndex <-
-    tryFindSuitableQueueFamilyIndex surface device queueFamilyProperties
-  debug . printf "Chosen queue family %d." $ queueFamilyIndex
+  debug "Finding compatible device queue families."
+  queueFamilies <- getQueueFamilies device surface
+  (graphicsQueueFamily, transferQueueFamily, queueFamilyQueueCounts) <- hoistMaybe
+    . tryFindSuitableQueueFamilyIndices $ queueFamilies
+  debug . uncurry (printf "Chosen graphics queue family %d, index %d.")
+    $ graphicsQueueFamily
+  debug . uncurry (printf "Chosen transfer queue family %d, index %d.")
+    $ transferQueueFamily
 
   -- Try to get the required surface capabilities, formats, present modes.
   swapchainSupport <- tryGetSwapchainSupport device surface
@@ -177,11 +185,13 @@ getPhysicalDeviceProperties surface device = runMaybeT $ do
   logTrace . show $ memoryProperties
 
   return PhysicalDevice {
+      physicalDeviceGraphicsQueue = graphicsQueueFamily,
       physicalDeviceHandle = device,
       physicalDeviceMemoryProperties = memoryProperties,
       physicalDeviceProperties = properties,
-      physicalDeviceQueueFamilyIndex = queueFamilyIndex,
-      physicalDeviceSwapchainSettings = swapchainSupport
+      physicalDeviceQueueFamilies = queueFamilyQueueCounts,
+      physicalDeviceSwapchainSettings = swapchainSupport,
+      physicalDeviceTransferQueue = transferQueueFamily
     }
 
 scoreSuitability :: PhysicalDevice -> Int
@@ -309,41 +319,73 @@ tryGetDepthFormat device = do
     fail errStr
   return deviceDepthImageFormat
 
--- Checks that a device has at least one queue family that can do everything
--- we want and try to pick it. This is pretty much always going to be possible.
-tryFindSuitableQueueFamilyIndex :: forall m. (MonadIO m, MonadLogger m)
-  => VkSurface.SurfaceKHR
-  -> Vk.PhysicalDevice
-  -> Vector VkDevice.QueueFamilyProperties
-  -> MaybeT m Word32
-tryFindSuitableQueueFamilyIndex surface device queueFamilyProperties = do
-  queueFamilies <- filterA (uncurry isSuitable) . zip [0..] . V.toList
-                     $ queueFamilyProperties
-  when (null queueFamilies) $ do
-    let errStr = "No compatible queue family."
-    err errStr
-    fail errStr
-  hoistMaybe . listToMaybe . fmap fst $ queueFamilies
+
+data QueueFamily = QueueFamily {
+  queueFamilyQueueCount :: Word32,
+  queueFamilyFlags :: VkDevice.QueueFlags,
+  queueFamilySurfaceSupport :: Bool
+}
+
+getQueueFamilies
+  :: forall m. MonadIO m
+  => Vk.PhysicalDevice
+  -> VkSurface.SurfaceKHR
+  -> m (Vector QueueFamily)
+getQueueFamilies device surface = do
+  queueFamilyPropertiess <-
+    VkDevice.getPhysicalDeviceQueueFamilyProperties device
+  let queueFamilyFlagss = fmap VkDevice.queueFlags queueFamilyPropertiess
+      queueFamilyQueueCounts = fmap VkDevice.queueCount queueFamilyPropertiess
+  queueFamilySurfaceSupports <-
+    V.iforM queueFamilyPropertiess (const . checkSurfaceSupport. fromIntegral)
+  return . V.zipWith3 QueueFamily queueFamilyQueueCounts queueFamilyFlagss
+    $ queueFamilySurfaceSupports
  where
-  -- Some queue family properties we can get from the properties object, some
-  -- we have to request via extension API calls, hence why we're doing this in
-  -- IO.
-  isSuitable :: Word32 -> VkDevice.QueueFamilyProperties -> MaybeT m Bool
-  isSuitable i queue = do
-    logTrace . printf "Checking queue family %d..." $ i
-    let supportsFlags = hasFlags queue
-    logTrace . ("Supports flags: " ++) $
-      if supportsFlags then "True" else "False"
-    canSurface <- checkSurfaceSupport i
-    return $ canSurface && supportsFlags
+  checkSurfaceSupport :: Word32 -> m Bool
+  checkSurfaceSupport i =
+    VkSurface.getPhysicalDeviceSurfaceSupportKHR device i surface
 
-  hasFlags = (== flags) . (.&. flags) . VkDevice.queueFlags
+-- Try to find the queue family/families that will support the queues we
+-- require.
+tryFindSuitableQueueFamilyIndices
+  :: Vector QueueFamily
+  -> Maybe ((Word32, Word32), (Word32, Word32), Map Word32 Int)
+tryFindSuitableQueueFamilyIndices queueFamilies = do
+  let (mQueues, (_, queueFamilyQueueCounts)) =
+         flip runState (queueFamilies, M.empty) . ListT.head $ do
+           graphicsQueue <- findSuitableQueueFamily graphicsQueueFlags True
+           transferQueue <- findSuitableQueueFamily transferQueueFlags False
+           return (graphicsQueue, transferQueue)
+  (graphicsQueue, transferQueue) <- mQueues
+  return (graphicsQueue, transferQueue, fmap (+1) queueFamilyQueueCounts)
+ where
+  findSuitableQueueFamily
+    :: VkDevice.QueueFlags
+    -> Bool
+    -> ListT (State (Vector QueueFamily, Map Word32 Int)) (Word32, Word32)
+  findSuitableQueueFamily requiredFlags requiresSurface = do
+    (families, queues) <- get
+    -- Find the index of a suitable queue family
+    (fIx, QueueFamily{..}) <- ListT.fromFoldable
+      . W.filter (isSuitable . snd) . V.imap (,) $ families
+    guard $ queueFamilyQueueCount > 0
+    -- Deplete that queue family queue count
+    let queueFamily = families V.! fIx
+        queueFamily' = queueFamily {
+            queueFamilyQueueCount = queueFamilyQueueCount - 1
+          }
+    -- Find the next available queue index
+    let fIx' = fromIntegral fIx
+        queues' = M.alter (\case Nothing -> Just 0; Just x -> Just $ x+1) fIx'
+                     queues
 
-  flags = Vk.QUEUE_GRAPHICS_BIT .|. Vk.QUEUE_TRANSFER_BIT
+    put (families V.// [(fIx, queueFamily')], queues')
+    return (fromIntegral fIx, fromIntegral $ queues' M.! fIx')
+   where
+    isSuitable :: QueueFamily -> Bool
+    isSuitable QueueFamily{..} = queueFamilyFlags .?. requiredFlags
+      && (not requiresSurface || queueFamilySurfaceSupport)
 
-  checkSurfaceSupport i = do
-    supportsSurface <- VkSurface.getPhysicalDeviceSurfaceSupportKHR device i
-      surface
-    logTrace . ("Has surface support: " ++) $
-      if supportsSurface then "True" else "False"
-    return supportsSurface
+  graphicsQueueFlags, transferQueueFlags :: VkDevice.QueueFlags
+  graphicsQueueFlags = Vk.QUEUE_GRAPHICS_BIT .|. Vk.QUEUE_TRANSFER_BIT
+  transferQueueFlags = Vk.QUEUE_TRANSFER_BIT

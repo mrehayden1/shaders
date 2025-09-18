@@ -4,8 +4,7 @@ module Graphics.Shaders.Base (
   ShadersT(..),
   runShadersT,
 
-  awaitIdle,
-  swap
+  awaitDeviceIdle
 ) where
 
 import Control.Monad.Exception
@@ -48,7 +47,5 @@ runShadersT (ShadersT m) = runResourceT $ do
 
   runVulkanReaderT vkInstance allocator $ do
     withWindowSurface allocator vkInstance $ \surface -> do
-      device <- createDevice surface
-
-      flip runDeviceReaderT device $
+      flip runDeviceReaderT surface $
         runSwapchainStateT surface m

@@ -8,7 +8,6 @@ module Graphics.Shaders.Internal.Instance (
 ) where
 
 import Control.Monad
-import Control.Monad.Codensity
 import Control.Monad.Exception
 import Control.Monad.IO.Class
 import Control.Monad.Reader
@@ -46,7 +45,6 @@ class Monad m => HasVulkan m where
     => m Vk.Instance
   getVulkanInstance = lift getVulkanInstance
 
-instance HasVulkan m => HasVulkan (Codensity m)
 instance HasVulkan m => HasVulkan (ReaderT e m)
 
 

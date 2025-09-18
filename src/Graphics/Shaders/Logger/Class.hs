@@ -9,9 +9,9 @@ module Graphics.Shaders.Logger.Class (
   err
 ) where
 
-import Control.Monad.Codensity
 import Control.Monad.Reader
 import Control.Monad.State
+import Control.Monad.Trans.Cont
 import Control.Monad.Trans.Maybe
 import Control.Monad.Trans.Resource
 
@@ -29,10 +29,6 @@ class Monad m => MonadLogger m where
 
 data LogLevel = LogTrace | LogDebug | LogInfo | LogWarn | LogError | LogNone
  deriving (Eq, Ord, Show)
-
-
-instance MonadLogger m => MonadLogger (Codensity m)
-
 
 -- Extra information
 logTrace :: MonadLogger m => String -> m ()
@@ -59,3 +55,4 @@ instance (MonadLogger m) => MonadLogger (ResourceT m)
 instance (MonadLogger m) => MonadLogger (MaybeT m)
 instance (MonadLogger m) => MonadLogger (StateT s m)
 instance (MonadLogger m) => MonadLogger (ReaderT e m)
+instance (MonadLogger m) => MonadLogger (ContT r m)

@@ -1,6 +1,6 @@
 module Graphics.Shaders.Texture (
   Texture,
-  loadTexture
+  createTexture
 ) where
 
 import Graphics.Shaders.Internal.Texture

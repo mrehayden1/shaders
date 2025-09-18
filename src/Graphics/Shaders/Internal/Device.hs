@@ -7,22 +7,25 @@ module Graphics.Shaders.Internal.Device (
   Device(..),
   createDevice,
 
-  awaitIdle
+  awaitDeviceIdle
 ) where
 
 import Control.Monad
-import Control.Monad.Codensity
 import Control.Monad.Exception
 import Control.Monad.Reader
+import Control.Monad.Trans.Cont
 import Control.Monad.Trans.Resource
 import Data.ByteString.UTF8 as UTF8
+import qualified Data.Map as M
 import qualified Data.Vector as V
 import Data.Word
 import Vulkan.Core10.AllocationCallbacks
 import qualified Vulkan.Core10.CommandPool as VkPool
+import qualified Vulkan.Core10.CommandBuffer as VkCmdBuffer
 import qualified Vulkan.Core10.Device as VkDevice
 import qualified Vulkan.Core10.DeviceInitialization as VkDevice
 import Vulkan.Core10.Enums as Vk
+import qualified Vulkan.Core10.Fence as VkFence
 import qualified Vulkan.Core10.Handles as Vk
 import qualified Vulkan.Core10.Pass as VkPass hiding (
   FramebufferCreateInfo(..))
@@ -38,39 +41,63 @@ import Graphics.Shaders.Internal.Instance
 import Graphics.Shaders.Internal.Window
 import Graphics.Shaders.Logger.Class
 
+-- Monads for interacting with a logical Vulkan device.
 class Monad m => HasVulkanDevice m where
-  getCommandPool :: m Vk.CommandPool
-  default getCommandPool :: (t m' ~ m, MonadTrans t, HasVulkanDevice m')
-    => m Vk.CommandPool
-  getCommandPool = lift getCommandPool
-
   getDevice :: m Vk.Device
   default getDevice :: (t m' ~ m, MonadTrans t, HasVulkanDevice m')
     => m Vk.Device
   getDevice = lift getDevice
 
+  getGraphicsCommandPool :: m Vk.CommandPool
+  default getGraphicsCommandPool
+    :: (t m' ~ m, MonadTrans t, HasVulkanDevice m')
+    => m Vk.CommandPool
+  getGraphicsCommandPool = lift getGraphicsCommandPool
+
   getMemoryProperties :: m VkDevice.PhysicalDeviceMemoryProperties
-  default getMemoryProperties :: (t m' ~ m, MonadTrans t, HasVulkanDevice m')
+  default getMemoryProperties
+    :: (t m' ~ m, MonadTrans t, HasVulkanDevice m')
     => m VkDevice.PhysicalDeviceMemoryProperties
   getMemoryProperties = lift getMemoryProperties
 
   getQueue :: m Vk.Queue
-  default getQueue :: (t m' ~ m, MonadTrans t, HasVulkanDevice m')
+  default getQueue
+    :: (t m' ~ m, MonadTrans t, HasVulkanDevice m')
     => m Vk.Queue
   getQueue = lift getQueue
 
   getRenderPass :: m Vk.RenderPass
-  default getRenderPass :: (t m' ~ m, MonadTrans t, HasVulkanDevice m')
+  default getRenderPass
+    :: (t m' ~ m, MonadTrans t, HasVulkanDevice m')
     => m Vk.RenderPass
   getRenderPass = lift getRenderPass
 
   getSwapchainSettings :: m SwapchainSettings
-  default getSwapchainSettings :: (t m' ~ m, MonadTrans t, HasVulkanDevice m')
+  default getSwapchainSettings
+    :: (t m' ~ m, MonadTrans t, HasVulkanDevice m')
     => m SwapchainSettings
   getSwapchainSettings = lift getSwapchainSettings
 
+  getTransferCommandBuffer :: m Vk.CommandBuffer
+  default getTransferCommandBuffer
+    :: (t m' ~ m, MonadTrans t, HasVulkanDevice m')
+    => m Vk.CommandBuffer
+  getTransferCommandBuffer = lift getTransferCommandBuffer
+
+  getTransferFence :: m Vk.Fence
+  default getTransferFence
+    :: (t m' ~ m, MonadTrans t, HasVulkanDevice m')
+    => m Vk.Fence
+  getTransferFence = lift getTransferFence
+
+  getTransferQueue :: m Vk.Queue
+  default getTransferQueue
+    :: (t m' ~ m, MonadTrans t, HasVulkanDevice m')
+    => m Vk.Queue
+  getTransferQueue = lift getTransferQueue
+
+instance HasVulkanDevice m => HasVulkanDevice (ContT r m)
 instance HasVulkanDevice m => HasVulkanDevice (VulkanReaderT m)
-instance HasVulkanDevice m => HasVulkanDevice (Codensity m)
 
 
 newtype DeviceReaderT m a = DeviceReaderT {
@@ -81,30 +108,45 @@ newtype DeviceReaderT m a = DeviceReaderT {
 
 -- A graphics enabled logical device.
 data Device = Device {
-  deviceCommandPool :: Vk.CommandPool,
+  -- Command pools indexed by queue family.
+  deviceGraphicsCommandPool :: Vk.CommandPool,
+  deviceGraphicsQueueHandle :: Vk.Queue,
   deviceHandle :: Vk.Device,
   deviceMemoryProperties :: VkDevice.PhysicalDeviceMemoryProperties,
-  deviceQueueHandle :: Vk.Queue,
   deviceRenderPass :: Vk.RenderPass,
-  deviceSwapchainSettings :: SwapchainSettings
+  deviceSwapchainSettings :: SwapchainSettings,
+  deviceTransferCommandBuffer :: Vk.CommandBuffer,
+  deviceTransferFence :: Vk.Fence,
+  deviceTransferQueueHandle :: Vk.Queue
 } deriving (Show)
 
 
 instance Monad m => HasVulkanDevice (DeviceReaderT m) where
-  getCommandPool = DeviceReaderT . asks $ deviceCommandPool
   getDevice = DeviceReaderT . asks $ deviceHandle
+  getGraphicsCommandPool = DeviceReaderT . asks $ deviceGraphicsCommandPool
   getMemoryProperties =
     DeviceReaderT . asks $ deviceMemoryProperties
-  getQueue = DeviceReaderT . asks $ deviceQueueHandle
+  getQueue = DeviceReaderT . asks $ deviceGraphicsQueueHandle
   getRenderPass = DeviceReaderT . asks $ deviceRenderPass
   getSwapchainSettings = DeviceReaderT . asks $ deviceSwapchainSettings
+  getTransferCommandBuffer = DeviceReaderT . asks $ deviceTransferCommandBuffer
+  getTransferFence = DeviceReaderT . asks $ deviceTransferFence
+  getTransferQueue = DeviceReaderT . asks $ deviceTransferQueueHandle
 
-runDeviceReaderT :: DeviceReaderT m a -> Device -> m a
-runDeviceReaderT (DeviceReaderT m) = runReaderT m
+runDeviceReaderT
+  :: (MonadAsyncException m, MonadLogger m, MonadResource m, HasWindow m,
+      HasVulkan m)
+  => DeviceReaderT m a
+  -> VkSurface.SurfaceKHR
+  -> m a
+runDeviceReaderT (DeviceReaderT m) surface = do
+  device <- createDevice surface
+  runReaderT m device
 
 
-createDevice :: (MonadAsyncException m, MonadLogger m, MonadResource m,
-    HasWindow m, HasVulkan m)
+createDevice
+  :: (MonadAsyncException m, MonadLogger m, MonadResource m, HasWindow m,
+      HasVulkan m)
   => VkSurface.SurfaceKHR
   -> m Device
 createDevice surface = do
@@ -123,14 +165,14 @@ createDevice surface = do
       deviceName = VkDevice.deviceName physicalDeviceProperties
   info $ "Chosen physical device: " <> UTF8.toString deviceName
 
-  -- Create the logical device and queue.
   debug "Creating logical device."
-  let queueCreateInfo = pure . SomeStruct $
-        VkDevice.DeviceQueueCreateInfo
-          ()
-          Vk.zero
-          physicalDeviceQueueFamilyIndex
-          (V.singleton 1)
+  let queueFamilyQueueCounts = V.fromList . M.assocs
+        $ physicalDeviceQueueFamilies
+      queueFamilies = V.toList . fmap fst $ queueFamilyQueueCounts
+
+  let queueCreateInfo = flip V.map queueFamilyQueueCounts $ \(ix, n) ->
+        SomeStruct . VkDevice.DeviceQueueCreateInfo () Vk.zero
+          ix . V.replicate n $ 1
 
       deviceCreateNext = (
           PhysicalDeviceVertexInputDynamicStateFeaturesEXT True,
@@ -145,31 +187,63 @@ createDevice surface = do
           (V.fromList requiredDeviceExtensions)
           Nothing
 
-  (_, vkDevice) <- allocate
+  logTrace "Dumping device create info."
+  logTrace . show $ deviceCreateInfo
+
+  vkDevice <- snd <$> allocate
     (VkDevice.createDevice physicalDeviceHandle deviceCreateInfo allocator)
-    (\device -> VkDevice.destroyDevice device allocator)
+    (`VkDevice.destroyDevice` allocator)
 
-  queue <- VkQueue.getDeviceQueue vkDevice physicalDeviceQueueFamilyIndex 0
+  let (graphicsQueueFamilyIndex, graphicsQueueIndex) =
+         physicalDeviceGraphicsQueue
+  graphicsQueue <- VkQueue.getDeviceQueue vkDevice graphicsQueueFamilyIndex
+    graphicsQueueIndex
 
-  commandPool <- createCommandPool allocator vkDevice
-    physicalDeviceQueueFamilyIndex
+  let (transferQueueFamilyIndex, transferQueueIndex) =
+         physicalDeviceTransferQueue
+  transferQueue <- VkQueue.getDeviceQueue vkDevice transferQueueFamilyIndex
+    transferQueueIndex
+
+  let transferQueueFenceCreateInfo = Vk.zero
+  transferQueueFence <- snd <$> allocate
+    (VkFence.createFence vkDevice transferQueueFenceCreateInfo allocator)
+    (\fence -> VkFence.destroyFence vkDevice fence allocator)
+
+  commandPools <- fmap M.fromList . forM queueFamilies $ \i ->
+    (i, ) <$> createCommandPool allocator vkDevice i
 
   let swapSettings = physicalDeviceSwapchainSettings
 
   renderPass <- createRenderPass allocator vkDevice swapSettings
 
+  let transferCommandPool = commandPools M.! transferQueueFamilyIndex
+      commandBufferCreateInfo = Vk.zero {
+        VkCmdBuffer.commandBufferCount = 1,
+        VkCmdBuffer.commandPool = transferCommandPool,
+        VkCmdBuffer.level = VkCmdBuffer.COMMAND_BUFFER_LEVEL_PRIMARY
+      }
+  debug "Allocating transfer command buffer."
+  transferCommandBuffer <- (V.! 0) . snd <$> allocate
+    (VkCmdBuffer.allocateCommandBuffers vkDevice commandBufferCreateInfo)
+    (\buffers -> do
+       VkCmdBuffer.freeCommandBuffers vkDevice transferCommandPool buffers)
+
   let device = Device {
-    deviceCommandPool = commandPool,
+    deviceGraphicsCommandPool = commandPools M.! graphicsQueueFamilyIndex,
+    deviceGraphicsQueueHandle = graphicsQueue,
     deviceHandle = vkDevice,
     deviceMemoryProperties = physicalDeviceMemoryProperties,
-    deviceQueueHandle = queue,
     deviceRenderPass = renderPass,
-    deviceSwapchainSettings = swapSettings
+    deviceSwapchainSettings = swapSettings,
+    deviceTransferCommandBuffer = transferCommandBuffer,
+    deviceTransferFence = transferQueueFence,
+    deviceTransferQueueHandle = transferQueue
   }
 
   return device
 
-createRenderPass :: (MonadLogger m, MonadResource m)
+createRenderPass
+  :: (MonadLogger m, MonadResource m)
   => Maybe AllocationCallbacks
   -> Vk.Device
   -> SwapchainSettings
@@ -239,6 +313,6 @@ createCommandPool allocator device queueFamilyIndex = do
     (\pool -> VkPool.destroyCommandPool device pool allocator)
 
 
-awaitIdle :: (MonadIO m, HasVulkanDevice m) => m ()
-awaitIdle = do
+awaitDeviceIdle :: (MonadIO m, HasVulkanDevice m) => m ()
+awaitDeviceIdle = do
   VkQueue.deviceWaitIdle =<< getDevice

@@ -19,8 +19,8 @@ import Text.Printf
 
 data TGA = TGA {
   tgaData :: BS.ByteString,
-  tgaHeight :: Int,
-  tgaWidth :: Int
+  tgaHeight :: Word,
+  tgaWidth :: Word
 } deriving (Show)
 
 instance Binary TGA where
@@ -97,7 +97,9 @@ instance Binary TGA where
       -- TODO Grayscale image
       3 -> fail "Unsuported grayscale image."
       _ -> fail . printf "Unknown image type value: %d" $ imageType
-    return . TGA pixels imageHeight $ imageWidth
+    let imageHeight' = fromIntegral imageHeight
+        imageWidth'  = fromIntegral imageWidth
+    return . TGA pixels imageHeight' $ imageWidth'
   put = undefined
 
 -- Decodes TGA image data into a 24-bit trucolor ByteString

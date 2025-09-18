@@ -23,8 +23,9 @@ framesInFlight :: Int
 framesInFlight = 2
 
 
--- A "frame" is the synchronisation scope within which commands are submitted
--- to the pipeline to render the next available image in the swapchain.
+-- A "frame" are the synchronisation objects and commands buffers with which
+-- GPU commands are submitted for presentation on the next available image in
+-- the swapchain.
 data Frame = Frame {
   frameCommandBuffer :: Vk.CommandBuffer,
   frameSyncObjects :: SyncObjects
@@ -59,7 +60,7 @@ createSyncObjects n = do
          VkSemaphore.destroySemaphore device semaphore allocator
       )
     debug "Creating in flight fence."
-    -- Unsignalled fence object by default.
+    -- Unsignalled fence.
     let inFlightFenceCreateInfo = Vk.zero
     (_, inFlightFence) <- allocate
       (VkFence.createFence device inFlightFenceCreateInfo allocator)
@@ -74,7 +75,7 @@ createCommandBuffers :: (MonadLogger m, MonadResource m, HasVulkanDevice m)
   -> m (Vector Vk.CommandBuffer)
 createCommandBuffers n = do
   device <- getDevice
-  commandPool <- getCommandPool
+  commandPool <- getGraphicsCommandPool
 
   let commandBufferCreateInfo = Vk.zero {
     VkCmdBuffer.commandBufferCount = fromIntegral n,
