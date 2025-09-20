@@ -12,6 +12,7 @@ module Graphics.Shaders.Internal.Swapchain (
 ) where
 
 import Control.Monad
+import Control.Monad.Except
 import Control.Monad.Exception
 import Control.Monad.State
 import Control.Monad.Trans.Cont
@@ -78,8 +79,8 @@ instance HasSwapchain m => HasSwapchain (ContT r m)
 
 newtype SwapchainStateT m a = SwapchainStateT {
   unSwapchainStateT :: StateT SwapchainState m a
-} deriving (Functor, Applicative, Monad, MonadIO, MonadException,
-    MonadAsyncException, MonadTrans, MonadFix, MonadLogger, MonadResource)
+} deriving (Functor, Applicative, Monad, MonadFix, MonadIO, MonadException,
+    MonadAsyncException, MonadTrans, MonadError e, MonadLogger, MonadResource)
 
 instance HasVulkan m => HasVulkan (SwapchainStateT m)
 instance HasVulkanDevice m => HasVulkanDevice (SwapchainStateT m)

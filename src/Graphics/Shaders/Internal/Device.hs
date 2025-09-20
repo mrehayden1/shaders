@@ -11,9 +11,12 @@ module Graphics.Shaders.Internal.Device (
 ) where
 
 import Control.Monad
+import Control.Monad.Except
 import Control.Monad.Exception
 import Control.Monad.Reader
+import Control.Monad.State
 import Control.Monad.Trans.Cont
+import Control.Monad.Trans.Maybe
 import Control.Monad.Trans.Resource
 import Data.ByteString.UTF8 as UTF8
 import qualified Data.Map as M
@@ -97,13 +100,17 @@ class Monad m => HasVulkanDevice m where
   getTransferQueue = lift getTransferQueue
 
 instance HasVulkanDevice m => HasVulkanDevice (ContT r m)
+instance HasVulkanDevice m => HasVulkanDevice (ExceptT e m)
+instance HasVulkanDevice m => HasVulkanDevice (MaybeT m)
+instance HasVulkanDevice m => HasVulkanDevice (ReaderT r m)
+instance HasVulkanDevice m => HasVulkanDevice (StateT s m)
 instance HasVulkanDevice m => HasVulkanDevice (VulkanReaderT m)
 
 
 newtype DeviceReaderT m a = DeviceReaderT {
   unDeviceReaderT :: ReaderT Device m a
-} deriving (Functor, Applicative, Monad, MonadIO, MonadException,
-    MonadAsyncException, MonadTrans, MonadFix, MonadLogger, MonadResource,
+} deriving (Functor, Applicative, Monad, MonadFix, MonadIO, MonadException,
+    MonadAsyncException, MonadTrans, MonadError e, MonadLogger, MonadResource,
     HasVulkan)
 
 -- A graphics enabled logical device.

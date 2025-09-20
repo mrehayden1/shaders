@@ -9,6 +9,7 @@ module Graphics.Shaders.Logger.Class (
   err
 ) where
 
+import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Trans.Cont
@@ -51,8 +52,9 @@ err :: MonadLogger m => String -> m ()
 err = loggerLog LogError
 
 
-instance (MonadLogger m) => MonadLogger (ResourceT m)
-instance (MonadLogger m) => MonadLogger (MaybeT m)
-instance (MonadLogger m) => MonadLogger (StateT s m)
-instance (MonadLogger m) => MonadLogger (ReaderT e m)
 instance (MonadLogger m) => MonadLogger (ContT r m)
+instance (MonadLogger m) => MonadLogger (ExceptT r m)
+instance (MonadLogger m) => MonadLogger (MaybeT m)
+instance (MonadLogger m) => MonadLogger (ReaderT e m)
+instance (MonadLogger m) => MonadLogger (ResourceT m)
+instance (MonadLogger m) => MonadLogger (StateT s m)

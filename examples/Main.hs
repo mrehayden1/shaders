@@ -18,7 +18,7 @@ import Graphics.Shaders.Render
 import Graphics.Shaders.Sampler
 import Graphics.Shaders.Texture
 import Graphics.Shaders.Texture.Loader.TGA
-import Graphics.Shaders.Transfer
+import Graphics.Shaders.Transfer (runTransferT, writeTexture)
 import Graphics.Shaders.Uniform
 import Graphics.Shaders.Window
 
@@ -96,8 +96,8 @@ app = do
   TGA{..} <- decodeFile "examples/texture-alpha.tga"
   texture <- createTexture tgaWidth tgaHeight
 
-  runTransfer $ do
-    transferTexture texture tgaData tgaWidth tgaHeight
+  runTransferT $ do
+    writeTexture texture tgaData tgaWidth tgaHeight
 
   let input = Input {
       inputMatrix = matrixBuffer,

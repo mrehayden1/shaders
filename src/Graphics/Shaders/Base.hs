@@ -7,8 +7,8 @@ module Graphics.Shaders.Base (
   awaitDeviceIdle
 ) where
 
+import Control.Monad.Except
 import Control.Monad.Exception
-import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Trans.Resource
 
@@ -24,9 +24,9 @@ type MonadShaders m = (MonadIO m, MonadUnliftIO m, MonadAsyncException m,
 
 newtype ShadersT m a = ShadersT {
   unShadersT :: SwapchainStateT (DeviceReaderT (VulkanReaderT (ResourceT m))) a
-} deriving (Functor, Applicative, Monad, MonadIO, MonadAsyncException,
-    MonadException, MonadFix, MonadResource, HasVulkan, HasVulkanDevice,
-    HasSwapchain)
+} deriving (Functor, Applicative, Monad, MonadFix, MonadIO,
+    MonadException, MonadAsyncException, MonadError e, MonadResource,
+    HasVulkan, HasVulkanDevice, HasSwapchain)
 
 instance MonadTrans ShadersT where
   lift = ShadersT . lift . lift . lift . lift

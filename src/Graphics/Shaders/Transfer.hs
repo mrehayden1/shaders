@@ -1,9 +1,10 @@
 module Graphics.Shaders.Transfer (
-  Transfer,
-  runTransfer,
+  TransferT,
+  runTransferT,
 
-  transferTexture,
-  transferBuffer
+  writeTexture,
+  writeBuffer,
+  writeBufferUnsafe
 ) where
 
 import Graphics.Shaders.Internal.Transfer

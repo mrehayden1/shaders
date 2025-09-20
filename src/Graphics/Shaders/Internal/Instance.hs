@@ -8,9 +8,11 @@ module Graphics.Shaders.Internal.Instance (
 ) where
 
 import Control.Monad
+import Control.Monad.Except
 import Control.Monad.Exception
-import Control.Monad.IO.Class
 import Control.Monad.Reader
+import Control.Monad.State
+import Control.Monad.Trans.Maybe
 import Control.Monad.Trans.Resource
 import Data.ByteString
 import Data.ByteString.Char8 as BS8
@@ -45,13 +47,16 @@ class Monad m => HasVulkan m where
     => m Vk.Instance
   getVulkanInstance = lift getVulkanInstance
 
+instance HasVulkan m => HasVulkan (ExceptT e m)
+instance HasVulkan m => HasVulkan (MaybeT m)
 instance HasVulkan m => HasVulkan (ReaderT e m)
+instance HasVulkan m => HasVulkan (StateT e m)
 
 
 newtype VulkanReaderT m a = VulkanReaderT {
   unVulkanReaderT :: ReaderT (Vk.Instance, Maybe AllocationCallbacks) m a
-} deriving (Functor, Applicative, Monad, MonadIO, MonadException,
-    MonadAsyncException, MonadTrans, MonadFix, MonadResource, MonadLogger,
+} deriving (Functor, Applicative, Monad, MonadFix, MonadIO, MonadException,
+    MonadAsyncException, MonadTrans, MonadError e, MonadResource, MonadLogger,
     HasWindow)
 
 runVulkanReaderT :: Vk.Instance

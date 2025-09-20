@@ -1,24 +1,27 @@
 module Graphics.Shaders.Internal.Transfer (
-  Transfer(..),
-  runTransfer,
+  MonadTransfer,
 
-  transferBuffer,
-  transferTexture,
+  TransferT(..),
+  runTransferT,
+
+  writeBuffer,
+  writeBufferUnsafe,
+
+  writeTexture,
 
   copyBufferToImage
 ) where
 
+import Control.Monad.Except
 import Control.Monad.Exception
-import Control.Monad.IO.Class
-import Control.Monad.Trans
-import Control.Monad.Trans.Cont
+import Control.Monad.Reader
+import Control.Monad.State
+import Control.Monad.Trans.Identity
+import Control.Monad.Trans.Maybe
 import Control.Monad.Trans.Resource
 import Data.ByteString.Internal as BS
-import Data.Function
 import qualified Data.Vector as V
-import Foreign.ForeignPtr
-import Foreign.Marshal
-import Foreign.Ptr
+import Foreign
 import qualified Vulkan.Core10.APIConstants as Vk
 import qualified Vulkan.Core10.CommandBuffer as VkCmd
 import qualified Vulkan.Core10.CommandBufferBuilding as VkCmd
@@ -41,27 +44,44 @@ import Graphics.Shaders.Internal.Swapchain
 import Graphics.Shaders.Internal.Texture
 import Graphics.Shaders.Logger.Class
 
--- A monad that brackets graphics queue commands using the current frame's
--- command buffer and finally displaying any rendered output to the window.
-newtype Transfer m a = Transfer { unTransfer :: ContT () m a }
-  deriving (Functor, Applicative, Monad, MonadIO, MonadTrans, MonadResource)
 
-instance HasVulkan m => HasVulkan (Transfer m)
-instance HasVulkanDevice m => HasVulkanDevice (Transfer m)
-instance HasSwapchain m => HasSwapchain (Transfer m)
-instance MonadLogger m => MonadLogger (Transfer m)
+-- A monad that brackets gpu commands using the transfer queue command buffer.
+class Monad m => MonadTransfer m where
+  getCommandBuffer :: m Vk.CommandBuffer
+  default getCommandBuffer
+    :: (MonadTransfer m', MonadTrans t, m ~ t m')
+    => m Vk.CommandBuffer
+  getCommandBuffer = lift getCommandBuffer
 
-runTransfer
+instance MonadTransfer m => MonadTransfer (ExceptT e m)
+instance MonadTransfer m => MonadTransfer (MaybeT m)
+instance MonadTransfer m => MonadTransfer (ReaderT e m)
+instance MonadTransfer m => MonadTransfer (StateT e m)
+
+newtype TransferT m a = TransferT { unTransferT :: IdentityT m a }
+  deriving (Functor, Applicative, Monad, MonadIO, MonadException,
+    MonadAsyncException, MonadTrans, MonadReader e, MonadError err,
+    MonadResource)
+
+instance HasVulkanDevice m => MonadTransfer (TransferT m) where
+  getCommandBuffer = getTransferCommandBuffer
+instance HasVulkan m => HasVulkan (TransferT m)
+instance HasVulkanDevice m => HasVulkanDevice (TransferT m)
+instance HasSwapchain m => HasSwapchain (TransferT m)
+instance MonadLogger m => MonadLogger (TransferT m)
+
+runTransferT
   :: (MonadIO m, HasVulkanDevice m, MonadLogger m)
-  => Transfer m ()
-  -> m ()
-runTransfer (Transfer m) = do
+  => TransferT m a
+  -> m a
+runTransferT (TransferT m) = do
   device <- getDevice
   commandBuffer <- getTransferCommandBuffer
 
-  flip runContT return $ do
-    ContT $ VkCmd.useCommandBuffer commandBuffer Vk.zero . (&) ()
-    m
+  a <- runIdentityT $
+    VkCmd.beginCommandBuffer commandBuffer Vk.zero
+      *> m
+      <* VkCmd.endCommandBuffer commandBuffer
 
   logTrace "Submitting transfer queue."
   let submitInfos = fmap SomeStruct . V.singleton $ Vk.zero {
@@ -77,16 +97,16 @@ runTransfer (Transfer m) = do
   _ <- VkFence.waitForFences device fences True maxBound
   VkFence.resetFences device fences
 
-  return ()
+  return a
 
 -- Write a buffer synchronously using the transfer queue
-transferBuffer
-  :: (MonadIO m, HasVulkanDevice m)
+writeBuffer
+  :: (MonadIO m, MonadTransfer m)
   => Buffer a
   -> [HostFormat a]
-  -> Transfer m ()
-transferBuffer Buffer{..} as = do
-  commandBuffer <- getTransferCommandBuffer
+  -> m ()
+writeBuffer Buffer{..} as = do
+  commandBuffer <- getCommandBuffer
 
   -- Copy data into the staging buffer.
   liftIO . bufferWriter $ as
@@ -96,14 +116,38 @@ transferBuffer Buffer{..} as = do
   VkCmd.cmdCopyBuffer commandBuffer bufferStagingBufferHandle
     bufferHandle copy
 
-transferTexture
-  :: (MonadAsyncException m, HasVulkanDevice m)
+-- Efficiently copy raw bytes into a `Buffer a`, bypassing any parsing and
+-- re-serialising of data to and from `HostFormat a`.
+--
+-- Warning: Only use this if you know what you are doing.
+writeBufferUnsafe
+  :: forall a b m. (MonadIO m, MonadTransfer m)
+  => Buffer a
+  -> ForeignPtr b
+  -> Int
+  -> Int
+  -> m ()
+writeBufferUnsafe Buffer{..} ptr' offset len = do
+  commandBuffer <- getCommandBuffer
+
+  -- Copy raw bytes into the staging buffer.
+  liftIO . withForeignPtr ptr' $ \ptr ->
+    copyBytes bufferStagingBufferPtr (ptr `plusPtr` offset) len
+
+  -- Transfer data in staging buffers to their writable buffer.
+  let copy = V.singleton $ VkCmd.BufferCopy Vk.zero Vk.zero
+               . fromIntegral $ len
+  VkCmd.cmdCopyBuffer commandBuffer bufferStagingBufferHandle
+    bufferHandle copy
+
+writeTexture
+  :: (MonadAsyncException m, MonadTransfer m)
   => Texture
   -> ByteString
   -> Word
   -> Word
-  -> Transfer m ()
-transferTexture Texture{..} imageData width height = do
+  -> m ()
+writeTexture Texture{..} imageData width height = do
   let BS.BS imageBytes imageSize = imageData
 
   -- Fill the buffer
@@ -112,14 +156,14 @@ transferTexture Texture{..} imageData width height = do
 
   copyBufferToImage textureStagingBufferHandle textureImage width height
 
-copyBufferToImage :: (MonadAsyncException m, HasVulkanDevice m)
+copyBufferToImage :: (MonadAsyncException m, MonadTransfer m)
   => Vk.Buffer
   -> Vk.Image
   -> Word
   -> Word
-  -> Transfer m ()
+  -> m ()
 copyBufferToImage buffer image width height = do
-  commandBuffer <- getTransferCommandBuffer
+  commandBuffer <- getCommandBuffer
 
   let imageToWriteMemoryBarrier = Vk.zero {
     VkBarrier.dstAccessMask = Vk.ACCESS_TRANSFER_WRITE_BIT,

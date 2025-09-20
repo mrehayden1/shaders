@@ -65,6 +65,12 @@ toFragmentBasic typ = ToFragment
     return . S $ return n
   )
 
+
+instance FragmentInput () where
+  type FragmentFormat () = ()
+  toFragment = arr (const ())
+
+
 instance FragmentInput (S V Float) where
   type FragmentFormat (S V Float) = S F Float
   toFragment = toFragmentBasic "float"

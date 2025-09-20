@@ -14,8 +14,8 @@ module Graphics.Shaders.Internal.Window (
 ) where
 
 import Control.Monad
+import Control.Monad.Except
 import Control.Monad.Exception
-import Control.Monad.IO.Class
 import Control.Monad.Reader
 import Control.Monad.Trans.Cont
 import Control.Monad.Trans.Resource
@@ -96,7 +96,7 @@ data GlfwWindowState = GlfwWindowState {
 newtype GlfwWindowT m a = GlfwWindowT {
   unGlfwWindowT :: ReaderT GlfwWindowState m a
 } deriving (Functor, Applicative, Monad, MonadTrans, MonadIO, MonadException,
-    MonadAsyncException, MonadUnliftIO, MonadLogger)
+    MonadAsyncException, MonadUnliftIO, MonadError e, MonadLogger)
 
 
 instance MonadIO m => HasWindow (GlfwWindowT m) where

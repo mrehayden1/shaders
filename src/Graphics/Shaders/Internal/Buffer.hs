@@ -31,8 +31,7 @@ import Control.Monad.Trans.Resource
 import Control.Monad.Writer
 import Data.Bits
 import Data.Word
-import Foreign.Ptr
-import Foreign.Storable
+import Foreign
 import Linear
 import qualified Vulkan.Core10.Buffer as VkBuffer
 import qualified Vulkan.Core10.Enums as Vk
@@ -54,6 +53,7 @@ data Buffer a = Buffer {
   bufferNumElems :: Int,
   bufferReleaseKeys :: (ReleaseKey, ReleaseKey, ReleaseKey, ReleaseKey),
   bufferStagingBufferHandle :: Vk.Buffer,
+  bufferStagingBufferPtr :: Ptr (),
   bufferStride :: Int,
   -- Produces the abstract value which represents the data stored by this
   -- buffer, usually an instance of BufferFormat.
@@ -112,6 +112,7 @@ createBuffer numVertices = do
     bufferReleaseKeys = (bufferReleaseKey, memoryReleaseKey,
       stagingBufferReleaseKey, stagingMemReleaseKey),
     bufferStagingBufferHandle = stagingBuffer,
+    bufferStagingBufferPtr = ptr,
     bufferStride = stride,
     bufferValueFun = \bIn -> flip evalState 0
       . flip runReaderT (bIn, buffer, stride) . valueProd $ undefined,
