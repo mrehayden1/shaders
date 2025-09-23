@@ -25,23 +25,23 @@ import Graphics.Shaders.Internal.Texture
 
 data Sampler = Sampler
 
-getSampler :: (e -> Texture) -> PipelineBuilder t e (S x Sampler)
+getSampler :: (e -> Texture) -> PipelineBuilder t c e (S x Sampler)
 getSampler getter = do
   -- Hash the getter StableName and look it up in the cache so we don't keep
   -- rebinding the uniform it's for.
   hash <- liftIO . fmap hashStableName . makeStableName $! getter
-  bindings <- PipelineBuilder . gets $ \(_, _, _, _, sbs) -> sbs
+  bindings <- PipelineBuilder . gets $ \(_, _, _, _, sbs, _) -> sbs
   let hasBinding = hash `M.member` bindings
 
   -- Get the uniform binding location.
   bind <- if hasBinding
-            -- If it's already been bound return that,
-            then return . samplerBindingNumber $ bindings M.! hash
-            -- else use the next available one.
-            else do
-              (_, bind, _, _, _) <- PipelineBuilder . update $
-                \(n, un, ins, ubs, sbs) -> (n, un + 1, ins, ubs, sbs)
-              return bind
+    -- If it's already been bound return that,
+    then return . samplerBindingNumber $ bindings M.! hash
+    -- else use the next available one.
+    else do
+      (_, bind, _, _, _, _) <- PipelineBuilder . update $
+        \(n, un, ins, ubs, sbs, pc) -> (n, un + 1, ins, ubs, sbs, pc)
+      return bind
 
   let bind' = BS.pack . show $ bind
 
@@ -58,14 +58,14 @@ getSampler getter = do
       }
 
   unless hasBinding . PipelineBuilder $ do
-    modify $ \(n, un, ins, ubs, sbs) ->
+    modify $ \(n, un, ins, ubs, sbs, pc) ->
       let sb = SamplerBinding {
         samplerBindingNumber = bind,
         samplerDeclaration = decl <> "\n",
         samplerDescrSetLayoutBinding = descrSetLayoutBinding,
         samplerTextureGetter = getter
       }
-      in (n, un, ins, ubs, M.insert hash sb sbs)
+      in (n, un, ins, ubs, M.insert hash sb sbs, pc)
 
   return . S . return $ "un" <> bind'
 

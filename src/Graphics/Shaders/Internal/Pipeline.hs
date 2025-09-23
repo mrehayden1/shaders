@@ -4,6 +4,8 @@ module Graphics.Shaders.Internal.Pipeline (
 
   UniformBinding(..),
   SamplerBinding(..),
+  PushConstantBinding(..),
+
   BufferGetter(..),
   withBufferGetter,
 
@@ -36,6 +38,7 @@ import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Vector (Vector)
 import qualified Data.Vector as V
+import Foreign
 import qualified Language.SpirV.Internal as SpirV
 import qualified Language.SpirV.ShaderKind as SpirV
 import qualified Language.SpirV.Shaderc as SpirV
@@ -49,6 +52,7 @@ import qualified Vulkan.Core10.Handles as Vk
 import qualified Vulkan.Core10.Pipeline as VkPipeline hiding (
   ComputePipelineCreateInfo(..))
 import qualified Vulkan.Core10.PipelineLayout as VkPipeline
+import qualified Vulkan.Core10.PipelineLayout as VkPush (PushConstantRange(..))
 import qualified Vulkan.Core10.Shader as VkShader
 import Vulkan.CStruct.Extends (SomeStruct(..))
 import qualified Vulkan.Zero as Vk
@@ -65,25 +69,26 @@ import Graphics.Shaders.Internal.Swapchain
 import Graphics.Shaders.Internal.Texture
 import Graphics.Shaders.Logger.Class
 
-data CompiledPipeline e = CompiledPipeline {
+data CompiledPipeline c e = CompiledPipeline {
   compiledPipeline :: VkPipeline.Pipeline,
   compiledPipelineDescriptorSets :: Vector VkDescr.DescriptorSet,
   compiledPipelineLayout :: Vk.PipelineLayout,
   compiledPipelinePrimitiveArray :: PrimitiveArrayGetter e,
   compiledPipelineSamplerInput :: [(Int, e -> Texture)],
-  compiledPipelineUniformInput :: [(Int, BufferGetter e)]
+  compiledPipelineUniformInput :: [(Int, BufferGetter e)],
+  compiledPipelinePushConstant :: Maybe (Ptr (), Int, c -> IO ())
 }
 
 -- |A monad for defining graphics pipelines.
-newtype PipelineBuilder t e a = PipelineBuilder {
+newtype PipelineBuilder t c e a = PipelineBuilder {
   unPipeline ::
     StateT
-    (PipelineBuilderState e)
+    (PipelineBuilderState c e)
     IO
     a
 } deriving (Functor, Applicative, Monad, MonadIO)
 
-type PipelineBuilderState e = (
+type PipelineBuilderState c e = (
     Int, -- Next unique name
     Int, -- Next uniform binding number
     -- Vertex bindings mapped by primitive stream name.
@@ -91,7 +96,9 @@ type PipelineBuilderState e = (
     -- Uniform binding mapped by hashed StableName of the uniform's getter.
     Map Int (UniformBinding e),
     -- Sampler binding mapped by hashed StableName of the samplers's getter.
-    Map Int (SamplerBinding e)
+    Map Int (SamplerBinding e),
+    -- Push constant binding
+    Maybe (PushConstantBinding c)
   )
 
 data VertexBinding e = VertexBinding {
@@ -99,10 +106,10 @@ data VertexBinding e = VertexBinding {
   vertexPrimitiveArrayGetter :: PrimitiveArrayGetter e
 }
 
-tellVertexBinding :: VertexBinding e -> PipelineBuilder t e Int
+tellVertexBinding :: VertexBinding e -> PipelineBuilder t c e Int
 tellVertexBinding i = do
-  (n', _, _, _, _) <- PipelineBuilder . update $
-    \(n, ub, ins, ubs, sbs) -> (n + 1, ub, M.insert n i ins, ubs, sbs)
+  (n', _, _, _, _, _) <- PipelineBuilder . update $
+    \(n, ub, ins, ubs, sbs, pc) -> (n + 1, ub, M.insert n i ins, ubs, sbs, pc)
   return n'
 
 data UniformBinding e = UniformBinding {
@@ -117,6 +124,12 @@ data SamplerBinding e = SamplerBinding {
   samplerDeclaration :: ByteString,
   samplerDescrSetLayoutBinding :: VkDescr.DescriptorSetLayoutBinding,
   samplerTextureGetter :: e -> Texture
+}
+
+data PushConstantBinding c = PushConstantBinding {
+  pushConstantDeclaration :: ByteString,
+  pushConstantSize :: Int,
+  pushConstantWriter :: Ptr () -> c -> IO ()
 }
 
 data BufferGetter e = forall a. BufferGetter (e -> Buffer a)
@@ -147,9 +160,9 @@ instance Functor (PrimitiveStream t) where
   fmap f (PrimitiveStream n a) = PrimitiveStream n (f a)
 
 toPrimitiveStream
-  :: forall e t a. (VertexInput a)
+  :: forall t c e a. (VertexInput a)
   => (e -> PrimitiveArray t a)
-  -> PipelineBuilder t e (PrimitiveStream t (VertexFormat a))
+  -> PipelineBuilder t c e (PrimitiveStream t (VertexFormat a))
 toPrimitiveStream getPrimitiveArray = do
   let ToVertex _ (Kleisli buildDeclM) = toVertex
         :: ToVertex a (VertexFormat a)
@@ -159,9 +172,9 @@ toPrimitiveStream getPrimitiveArray = do
   inName <- tellVertexBinding $ VertexBinding inputDecls getter
   return $ PrimitiveStream inName a
 
-rasterize :: forall a e t. FragmentInput a
+rasterize :: forall t c e a. FragmentInput a
   => PrimitiveStream t (GLPos, a)
-  -> PipelineBuilder t e (FragmentStream (FragmentFormat a))
+  -> PipelineBuilder t c e (FragmentStream (FragmentFormat a))
 rasterize (PrimitiveStream inName (glPos, vOut)) = do
   let ToFragment (Kleisli buildOutput) =
         toFragment :: ToFragment a (FragmentFormat a)
@@ -178,11 +191,11 @@ rasterize (PrimitiveStream inName (glPos, vOut)) = do
 
   return $ FragmentStream fIn raster
 
-compilePipeline :: forall e m t. (MonadAsyncException m, MonadLogger m,
+compilePipeline :: forall m t c e. (MonadAsyncException m, MonadLogger m,
     MonadResource m, HasVulkan m, HasVulkanDevice m, HasSwapchain m,
-    BaseTopology t)
-  => PipelineBuilder t e (FragmentStream (V4 (S F Float)))
-  -> m (CompiledPipeline e)
+    BaseTopology t, Storable c)
+  => PipelineBuilder t c e (FragmentStream (V4 (S F Float)))
+  -> m (CompiledPipeline c e)
 compilePipeline pipeline = do
   allocator <- getVulkanAllocator
   device <- getDevice
@@ -190,8 +203,8 @@ compilePipeline pipeline = do
   renderPass <- getRenderPass
 
   -- TODO replace all this pattern matching with a `runPipeline`
-  (fs, (_, _, inputs, uniforms, samplers)) <- liftIO
-    . flip runStateT (0, 0, mempty, mempty, mempty) . unPipeline
+  (fs, (_, _, inputs, uniforms, samplers, pushConstant)) <- liftIO
+    . flip runStateT (0, 0, mempty, mempty, mempty, Nothing) . unPipeline
     $ pipeline
   let FragmentStream fOut raster = fs
       Rasterization inName vBody glPos vOutDecls fInDecls = raster
@@ -240,6 +253,7 @@ compilePipeline pipeline = do
   let uniformDecls = fmap uniformDeclaration uniforms
       samplerDecls = fmap samplerDeclaration samplers
       uniformDecls' = M.elems $ uniformDecls <> samplerDecls
+      pushConstantDecl = maybe "" pushConstantDeclaration pushConstant
 
   vShaderBody <- liftIO . execExprM 2 $ do
     _ <- unS vBody
@@ -255,6 +269,7 @@ compilePipeline pipeline = do
         <> vInDecls <> "\n"
         <> vOutDecls <> "\n"
         <> BS.intercalate "\n" uniformDecls' <> "\n"
+        <> pushConstantDecl <> "\n"
         <> "void main() {\n"
         <> vShaderBody
         <> "}"
@@ -273,6 +288,7 @@ compilePipeline pipeline = do
         <> fInDecls <> "\n"
         <> "layout(location = 0) out vec4 outColor;\n\n"
         <> BS.intercalate "\n" uniformDecls' <> "\n"
+        <> pushConstantDecl <> "\n"
         <> "void main() {\n"
         <> fShaderBody
         <> "}"
@@ -280,7 +296,15 @@ compilePipeline pipeline = do
 
   debug "Creating pipeline layout."
   let layoutInfo = Vk.zero {
-    VkPipeline.setLayouts = V.singleton descriptorSetLayout
+    VkPipeline.setLayouts = V.singleton descriptorSetLayout,
+    VkPipeline.pushConstantRanges = case pushConstant of
+      Just pc ->
+        V.singleton $ Vk.zero {
+          VkPush.stageFlags = Vk.SHADER_STAGE_VERTEX_BIT
+            .|. Vk.SHADER_STAGE_FRAGMENT_BIT,
+          VkPush.size = fromIntegral . pushConstantSize $ pc
+        }
+      Nothing -> V.empty
   }
   (_, layout) <- allocate
     (VkPipeline.createPipelineLayout device layoutInfo allocator)
@@ -357,6 +381,10 @@ compilePipeline pipeline = do
   when (result /= Vk.SUCCESS) $
     warn . printf "Non success result: %s" . show $ result
 
+  pushConstant' <- forM pushConstant $ \push -> do
+    ptr <- castPtr . snd <$> allocate (malloc :: IO (Ptr c)) free
+    return (ptr, pushConstantSize push, pushConstantWriter push ptr)
+
   return $ CompiledPipeline {
     compiledPipeline = vkPipeline,
     compiledPipelineDescriptorSets = descriptorSets,
@@ -365,7 +393,8 @@ compilePipeline pipeline = do
     compiledPipelineSamplerInput = M.elems . flip fmap samplers $
       liftA2 (,) samplerBindingNumber samplerTextureGetter,
     compiledPipelineUniformInput = M.elems . flip fmap uniforms $
-      liftA2 (,) uniformBindingNumber uniformBufferGetter
+      liftA2 (,) uniformBindingNumber uniformBufferGetter,
+    compiledPipelinePushConstant = pushConstant'
   }
 
 

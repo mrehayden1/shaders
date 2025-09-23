@@ -21,5 +21,6 @@ update' f = do
   modify' f
   return s
 
+-- Increment a state that is an `Enum` and return its previous value.
 getNext :: (MonadState s m, Enum s) => m s
 getNext = update succ

@@ -14,6 +14,7 @@ import Control.Monad.Trans
 import Control.Monad.Trans.Cont
 import Data.Function
 import qualified Data.Vector as V
+import Foreign
 import qualified Vulkan.Core10.APIConstants as Vk
 import qualified Vulkan.Core10.CommandBuffer as VkCmd hiding (
   CommandBufferInheritanceInfo(..))
@@ -213,13 +214,13 @@ clearWindow = do
     Vk.PIPELINE_STAGE_ALL_GRAPHICS_BIT Vk.zero mempty mempty
     imagesFromClearMemoryBarriers
 
-
-drawWindow :: forall m e. (MonadIO m, MonadLogger m, HasVulkanDevice m,
+drawWindow :: forall m c e. (MonadIO m, MonadLogger m, HasVulkanDevice m,
     HasSwapchain m)
-  => e
-  -> CompiledPipeline e
+  => c
+  -> e
+  -> CompiledPipeline c e
   -> Render m ()
-drawWindow e CompiledPipeline{..} = do
+drawWindow push env CompiledPipeline{..} = do
   device <- getDevice
   (frameNumber, Frame{..}) <- getCurrentFrame
   let commandBuffer = frameCommandBuffer
@@ -232,7 +233,7 @@ drawWindow e CompiledPipeline{..} = do
   let descriptorSet = compiledPipelineDescriptorSets V.! frameNumber
       uniformDescriptorWrites = flip fmap compiledPipelineUniformInput $
         \(bind, getter) ->
-          let b = withBufferGetter getter e bufferHandle
+          let b = withBufferGetter getter env bufferHandle
           in SomeStruct $ Vk.zero {
             VkDSWrite.dstSet = descriptorSet,
             VkDSWrite.dstBinding = fromIntegral bind,
@@ -245,7 +246,7 @@ drawWindow e CompiledPipeline{..} = do
           }
       samplerDescriptorWrites = flip fmap compiledPipelineSamplerInput $
         \(bind, getter) ->
-          let Texture{..} = getter e
+          let Texture{..} = getter env
           in SomeStruct $ Vk.zero {
             VkDSWrite.dstSet = descriptorSet,
             VkDSWrite.dstBinding = fromIntegral bind,
@@ -263,8 +264,10 @@ drawWindow e CompiledPipeline{..} = do
   VkDescr.updateDescriptorSets device descriptorWrites V.empty
 
   -- Record draw commands.
+  --
+  -- Use Codensity to bracket command buffer recording and render pass.
+  -- TODO We don't need to use codensity to clean up after an exception.
   flip runContT return $ do
-    -- Use Codensity to bracket command buffer recording and render pass.
     extent <- getSwapchainExtent
     renderPass <- getRenderPass
 
@@ -279,6 +282,19 @@ drawWindow e CompiledPipeline{..} = do
       },
       VkCmd.renderPass = renderPass
     }
+
+    -- Push the push constants
+    case compiledPipelinePushConstant of
+      Nothing -> return ()
+      Just (ptr, sz, pcWriter) -> do
+        liftIO $ pcWriter push
+        VkCmd.cmdPushConstants
+          commandBuffer
+          compiledPipelineLayout
+          (Vk.SHADER_STAGE_VERTEX_BIT .|. Vk.SHADER_STAGE_FRAGMENT_BIT)
+          0
+          (fromIntegral sz)
+          ptr
 
     ContT $
       VkCmd.cmdUseRenderPass commandBuffer renderPassBeginInfo
@@ -309,7 +325,7 @@ drawWindow e CompiledPipeline{..} = do
 
     -- Begin draw calls
     logTrace "Recording draw commands."
-    withPrimitiveArrayGetter compiledPipelinePrimitiveArray e $ \pa ->
+    withPrimitiveArrayGetter compiledPipelinePrimitiveArray env $ \pa ->
       forM_ (unPrimitiveArray pa) $ \PrimitiveArrayDrawCall{..} -> do
 
         let indexed = primitiveArrayIndexed

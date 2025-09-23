@@ -14,6 +14,7 @@ import Graphics.Shaders
 import Graphics.Shaders.Buffer
 import Graphics.Shaders.Logger
 import Graphics.Shaders.Pipeline
+import Graphics.Shaders.PushConstant
 import Graphics.Shaders.Render
 import Graphics.Shaders.Sampler
 import Graphics.Shaders.Texture
@@ -108,7 +109,7 @@ app = do
   pipeline <- compilePipeline $ do
     vertices <- toPrimitiveStream inputVertices
 
-    matrix :: M44 (S V Float) <- getUniform inputMatrix
+    matrix :: M44 (S V Float) <- getPushConstant
 
     sampler <- getSampler inputTexture
 
@@ -138,18 +139,17 @@ app = do
                     $ startTime :: Float
 
     let s = min 1 $ simTime * 0.1
-        matrixData = [
-            V4
-              (V4 s   0   0   0  )
-              (V4 0   s   0   0  )
-              (V4 0   0   1   0  )
-              (V4 0   0   0   1  )
-          ]
+        matrixData =
+          V4
+            (V4 s   0   0   0  )
+            (V4 0   s   0   0  )
+            (V4 0   0   1   0  )
+            (V4 0   0   0   1  )
 
     renderFrame $ do
-      writeBuffer matrixBuffer matrixData
+      --writeBuffer matrixBuffer [ matrixData ]
       clearWindow
-      drawWindow input pipeline
+      drawWindow matrixData input pipeline
 
     logTrace "Polling window events"
     windowEvents <- pollWindowEvents

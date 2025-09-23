@@ -45,25 +45,25 @@ type DeclM = ReaderT
   )
 
 -- Gets the uniform from the Pipeline environment.
-getUniform :: forall t e a x. UniformInput a
+getUniform :: forall t c e a x. UniformInput a
   => (e -> Buffer (Uniform a))
-  -> PipelineBuilder t e (UniformFormat a x)
+  -> PipelineBuilder t c e (UniformFormat a x)
 getUniform getter = do
   -- Hash the getter StableName and look it up in the cache so we don't keep
   -- rebinding the uniform it's for.
   hash <- liftIO . fmap hashStableName . makeStableName $! getter
-  bindings <- PipelineBuilder . gets $ \(_, _, _, ubs, _) -> ubs
+  bindings <- PipelineBuilder . gets $ \(_, _, _, ubs, _, _) -> ubs
   let hasBinding = hash `M.member` bindings
 
   -- Get the uniform binding location.
   bind <- if hasBinding
-            -- If it's already been bound return that,
-            then return . uniformBindingNumber $ bindings M.! hash
-            -- else use the next available one.
-            else do
-              (_, bind, _, _, _) <- PipelineBuilder . update $
-                \(n, un, ins, ubs, sbs) -> (n, un + 1, ins, ubs, sbs)
-              return bind
+    -- If it's already been bound return that,
+    then return . uniformBindingNumber $ bindings M.! hash
+    -- else use the next available one.
+    else do
+      (_, bind, _, _, _, _) <- PipelineBuilder . update $
+        \(n, un, ins, ubs, sbs, pc) -> (n, un + 1, ins, ubs, sbs, pc)
+      return bind
 
   let bind' = BS.pack . show $ bind
       blockName = "un" <> bind'
@@ -88,14 +88,14 @@ getUniform getter = do
 
   -- Create the uniform binding if it doesn't already have one.
   unless hasBinding . PipelineBuilder $ do
-    modify $ \(n, un, ins, ubs, sbs) ->
+    modify $ \(n, un, ins, ubs, sbs, pc) ->
       let ub = UniformBinding {
         uniformBindingNumber = bind,
         uniformBufferGetter = BufferGetter getter,
         uniformDeclaration = decl <> "\n",
         uniformDescrSetLayoutBinding = descrSetLayoutBinding
       }
-      in (n, un, ins, M.insert hash ub ubs, sbs)
+      in (n, un, ins, M.insert hash ub ubs, sbs, pc)
 
   return a
 
