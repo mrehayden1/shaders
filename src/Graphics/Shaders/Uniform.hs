@@ -73,7 +73,7 @@ getUniform getter = do
       (a, decls) = runWriter . flip evalStateT 0
         . flip runReaderT blockName . buildDeclrs $ (undefined :: a)
 
-      decl = "layout(std140, binding = " <> bind' <> ") uniform UBO" <> bind'
+      decl = "layout(std140, binding = " <> bind' <> ") uniform Uniform" <> bind'
         <> " {\n"
         <> "  " <> intercalate "\n  " decls <> "\n"
         <> "} " <> blockName <> ";"

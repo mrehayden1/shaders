@@ -56,7 +56,7 @@ getPushConstant = do
         = toPushConstant :: ToPush x c (PushFormat c x)
       (a, decls) = runDeclM . buildDecl $ (undefined :: c)
 
-      decl = "layout(push_constant) uniform constants"
+      decl = "layout(push_constant) uniform Constants"
         <> " {\n"
         <> "  " <> intercalate "\n  " decls <> "\n"
         <> "} pc;"
