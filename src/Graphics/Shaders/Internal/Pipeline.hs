@@ -74,7 +74,7 @@ data CompiledPipeline c e = CompiledPipeline {
   compiledPipelineDescriptorSets :: Vector VkDescr.DescriptorSet,
   compiledPipelineLayout :: Vk.PipelineLayout,
   compiledPipelinePrimitiveArray :: PrimitiveArrayGetter e,
-  compiledPipelineSamplerInput :: [(Int, e -> Texture)],
+  compiledPipelineSamplerInput :: [(Int, e -> (Texture, TextureSampler))],
   compiledPipelineUniformInput :: [(Int, BufferGetter e)],
   compiledPipelinePushConstant :: Maybe (Ptr (), Int, c -> IO ())
 }
@@ -91,6 +91,8 @@ newtype PipelineBuilder t c e a = PipelineBuilder {
 type PipelineBuilderState c e = (
     Int, -- Next unique name
     Int, -- Next uniform binding number
+    -- TODO Split the properties below into a Monoid and assemble them in a
+    -- WriterT instead.
     -- Vertex bindings mapped by primitive stream name.
     Map Int (VertexBinding e),
     -- Uniform binding mapped by hashed StableName of the uniform's getter.
@@ -123,7 +125,7 @@ data SamplerBinding e = SamplerBinding {
   samplerBindingNumber :: Int,
   samplerDeclaration :: ByteString,
   samplerDescrSetLayoutBinding :: VkDescr.DescriptorSetLayoutBinding,
-  samplerTextureGetter :: e -> Texture
+  samplerGetter :: e -> (Texture, TextureSampler)
 }
 
 data PushConstantBinding c = PushConstantBinding {
@@ -391,7 +393,7 @@ compilePipeline pipeline = do
     compiledPipelineLayout = layout,
     compiledPipelinePrimitiveArray = vertexPrimitiveArrayGetter,
     compiledPipelineSamplerInput = M.elems . flip fmap samplers $
-      liftA2 (,) samplerBindingNumber samplerTextureGetter,
+      liftA2 (,) samplerBindingNumber samplerGetter,
     compiledPipelineUniformInput = M.elems . flip fmap uniforms $
       liftA2 (,) uniformBindingNumber uniformBufferGetter,
     compiledPipelinePushConstant = pushConstant'

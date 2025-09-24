@@ -41,7 +41,7 @@ type Vertex = (B4 Float, B2 Float, V4 (B4 Float))
 
 data Input = Input {
   inputMatrix :: Buffer (Uniform (V4 (B4 Float))),
-  inputTexture :: Texture,
+  inputTexture :: (Texture, TextureSampler),
   inputVertices :: PrimitiveArray Triangles Vertex
 }
 
@@ -97,12 +97,15 @@ app = do
   TGA{..} <- decodeFile "examples/texture-alpha.tga"
   texture <- createTexture tgaWidth tgaHeight
 
+  textureSampler <- createTextureSampler TextureFilterLinear TextureFilterLinear
+    TextureMipmapLinear TextureWrapRepeat TextureWrapRepeat
+
   runTransferT $ do
     writeTexture texture tgaData tgaWidth tgaHeight
 
   let input = Input {
       inputMatrix = matrixBuffer,
-      inputTexture = texture,
+      inputTexture = (texture, textureSampler),
       inputVertices = quadPrimitives
     }
 

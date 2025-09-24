@@ -23,9 +23,12 @@ import Graphics.Shaders.Internal.Expr
 import Graphics.Shaders.Internal.Pipeline
 import Graphics.Shaders.Internal.Texture
 
+-- A texture sampler function in GLSL
 data Sampler = Sampler
 
-getSampler :: (e -> Texture) -> PipelineBuilder t c e (S x Sampler)
+getSampler
+  :: (e -> (Texture, TextureSampler))
+  -> PipelineBuilder t c e (S x Sampler)
 getSampler getter = do
   -- Hash the getter StableName and look it up in the cache so we don't keep
   -- rebinding the uniform it's for.
@@ -63,7 +66,7 @@ getSampler getter = do
         samplerBindingNumber = bind,
         samplerDeclaration = decl <> "\n",
         samplerDescrSetLayoutBinding = descrSetLayoutBinding,
-        samplerTextureGetter = getter
+        samplerGetter = getter
       }
       in (n, un, ins, ubs, M.insert hash sb sbs, pc)
 

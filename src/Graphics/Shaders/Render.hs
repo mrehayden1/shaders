@@ -246,7 +246,7 @@ drawWindow push env CompiledPipeline{..} = do
           }
       samplerDescriptorWrites = flip fmap compiledPipelineSamplerInput $
         \(bind, getter) ->
-          let Texture{..} = getter env
+          let (Texture{..}, TextureSampler{..}) = getter env
           in SomeStruct $ Vk.zero {
             VkDSWrite.dstSet = descriptorSet,
             VkDSWrite.dstBinding = fromIntegral bind,
@@ -256,7 +256,7 @@ drawWindow push env CompiledPipeline{..} = do
             VkDSWrite.imageInfo = V.singleton $ Vk.zero {
               VkDSImage.imageLayout = Vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
               VkDSImage.imageView = textureImageView,
-              VkDSImage.sampler = textureSampler
+              VkDSImage.sampler = textureSamplerHandle
             }
           }
       descriptorWrites = V.fromList $
